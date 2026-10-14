@@ -35,23 +35,28 @@ import {
 } from "@/types";
 
 export default function SelectionProcessPage() {
-  const { success, error: toastError } = useToast();
+  const { success, error: toastError, info } = useToast();
 
   const [drives, setDrives] = useState<RecruitmentDrive[]>([]);
   const [selectedDriveId, setSelectedDriveId] = useState<string>("");
   const [stages, setStages] = useState<RecruitmentStage[]>([]);
   const [applications, setApplications] = useState<RecruitmentApplication[]>([]);
+  const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
   const [assessments, setAssessments] = useState<CandidateAssessmentRecord[]>([]);
   const [interviews, setInterviews] = useState<CandidateInterviewRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [isAdvancing, setIsAdvancing] = useState<Record<string, boolean>>({});
 
-  // Active view tab: "pipeline" | "assessments" | "evaluations" | "stages"
+  // Active view tab: "pipeline" | "assessments" | "evaluations"
   const [activeTab, setActiveTab] = useState<"pipeline" | "assessments" | "evaluations">("pipeline");
 
   // Assessment Score Modal
   const [isScoreModalOpen, setIsScoreModalOpen] = useState(false);
   const [selectedAssessmentCandidate, setSelectedAssessmentCandidate] = useState<RecruitmentApplication | null>(null);
   const [assessmentScoreInput, setAssessmentScoreInput] = useState<string>("85");
+  const [isSavingScore, setIsSavingScore] = useState(false);
 
   // Interview Evaluation Modal
   const [isEvalModalOpen, setIsEvalModalOpen] = useState(false);
@@ -61,6 +66,15 @@ export default function SelectionProcessPage() {
   const [overallScore, setOverallScore] = useState<number>(85);
   const [evalFeedback, setEvalFeedback] = useState<string>("Strong technical competence.");
   const [evalRecommendation, setEvalRecommendation] = useState<"RECOMMEND" | "HOLD" | "NOT_RECOMMEND">("RECOMMEND");
+  const [isSavingEval, setIsSavingEval] = useState(false);
+
+  // Debounce search query by 300ms
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
 
   useEffect(() => {
     fetchInitialDrives();
@@ -68,9 +82,9 @@ export default function SelectionProcessPage() {
 
   useEffect(() => {
     if (selectedDriveId) {
-      fetchDriveStagesAndData(selectedDriveId);
+      fetchDriveStagesAndData(selectedDriveId, debouncedSearch);
     }
-  }, [selectedDriveId]);
+  }, [selectedDriveId, debouncedSearch]);
 
   const fetchInitialDrives = async () => {
     try {
@@ -88,12 +102,13 @@ export default function SelectionProcessPage() {
     }
   };
 
-  const fetchDriveStagesAndData = async (driveId: string) => {
+  const fetchDriveStagesAndData = async (driveId: string, search = "") => {
     setIsLoading(true);
     try {
+      const searchParam = search ? `&search=${encodeURIComponent(search)}` : "";
       const [stagesRes, appsRes, assessRes, intRes] = await Promise.all([
         fetch(`/api/recruiter/drives/${driveId}/stages`),
-        fetch(`/api/recruiter/applications?driveId=${driveId}`),
+        fetch(`/api/recruiter/applications?driveId=${driveId}&pageSize=50${searchParam}`),
         fetch(`/api/recruiter/assessments?driveId=${driveId}`),
         fetch(`/api/recruiter/interviews?driveId=${driveId}`),
       ]);
@@ -105,6 +120,9 @@ export default function SelectionProcessPage() {
       if (appsRes.ok) {
         const aData = await appsRes.json();
         setApplications(aData.applications || []);
+        if (aData.stageCounts) {
+          setStageCounts(aData.stageCounts);
+        }
       }
       if (assessRes.ok) {
         const assData = await assessRes.json();
@@ -122,7 +140,8 @@ export default function SelectionProcessPage() {
   };
 
   const handleRecordScore = async () => {
-    if (!selectedAssessmentCandidate) return;
+    if (!selectedAssessmentCandidate || isSavingScore) return;
+    setIsSavingScore(true);
     try {
       const res = await fetch("/api/recruiter/assessments", {
         method: "POST",
@@ -142,15 +161,21 @@ export default function SelectionProcessPage() {
       if (res.ok) {
         success(`Assessment score (${assessmentScoreInput}/100) saved for ${selectedAssessmentCandidate.studentName}`);
         setIsScoreModalOpen(false);
-        fetchDriveStagesAndData(selectedDriveId);
+        fetchDriveStagesAndData(selectedDriveId, debouncedSearch);
+      } else {
+        const data = await res.json();
+        toastError(data.error || "Failed saving assessment score.");
       }
     } catch (err) {
       toastError("Failed saving assessment score.");
+    } finally {
+      setIsSavingScore(false);
     }
   };
 
   const handleRecordEvaluation = async () => {
-    if (!selectedEvalInterview) return;
+    if (!selectedEvalInterview || isSavingEval) return;
+    setIsSavingEval(true);
     try {
       const res = await fetch(`/api/recruiter/interviews/${selectedEvalInterview.id}/evaluate`, {
         method: "POST",
@@ -167,30 +192,53 @@ export default function SelectionProcessPage() {
       if (res.ok) {
         success(`Evaluation recorded for ${selectedEvalInterview.candidateName}`);
         setIsEvalModalOpen(false);
-        fetchDriveStagesAndData(selectedDriveId);
+        fetchDriveStagesAndData(selectedDriveId, debouncedSearch);
+      } else {
+        const data = await res.json();
+        toastError(data.error || "Failed recording evaluation.");
       }
     } catch (err) {
       toastError("Failed recording evaluation.");
+    } finally {
+      setIsSavingEval(false);
     }
   };
 
-  const handleAdvanceStage = async (appId: string, nextStage: RecruitmentStage) => {
+  const handleAdvanceStage = async (app: RecruitmentApplication, nextStage: RecruitmentStage) => {
+    if (isAdvancing[app.id]) return;
+
+    setIsAdvancing((prev) => ({ ...prev, [app.id]: true }));
     try {
-      const res = await fetch(`/api/recruiter/applications/${appId}`, {
+      const idempotencyKey = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `adv_${Date.now()}_${app.id}`;
+      const res = await fetch(`/api/recruiter/applications/${app.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: "IN_SELECTION",
           nextStageId: nextStage.id,
+          expectedVersion: app.version,
+          idempotencyKey,
           notes: `Advanced to ${nextStage.name}`,
         }),
       });
-      if (res.ok) {
-        success(`Candidate advanced to ${nextStage.name}`);
-        fetchDriveStagesAndData(selectedDriveId);
+
+      const resData = await res.json();
+
+      if (res.ok && resData.success) {
+        success(`Candidate ${app.studentName} successfully advanced to ${nextStage.name}`);
+        fetchDriveStagesAndData(selectedDriveId, debouncedSearch);
+      } else if (res.status === 409) {
+        info(resData.error || "Concurrent update conflict. Refreshing latest candidate state...");
+        fetchDriveStagesAndData(selectedDriveId, debouncedSearch);
+      } else if (res.status === 422) {
+        toastError(resData.error || "Candidate does not satisfy stage qualification criteria.");
+      } else {
+        toastError(resData.error || "Failed advancing candidate.");
       }
     } catch (err) {
-      toastError("Failed advancing candidate.");
+      toastError("Network error while advancing candidate.");
+    } finally {
+      setIsAdvancing((prev) => ({ ...prev, [app.id]: false }));
     }
   };
 
@@ -270,6 +318,31 @@ export default function SelectionProcessPage() {
           </button>
         </div>
 
+        {/* Search & Filter Toolbar */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 rounded-2xl bg-card border border-border/80 shadow-xs">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search candidate by name or university..."
+              className="w-full h-9 pl-9 pr-4 text-xs rounded-xl bg-muted/40 border border-border focus:outline-none focus:border-blue-500 text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground self-end sm:self-auto">
+            {isLoading && (
+              <span className="flex items-center gap-1.5 text-blue-500">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Updating pipeline...</span>
+              </span>
+            )}
+            <span className="font-mono text-[11px] bg-muted/60 px-2.5 py-1 rounded-lg border border-border">
+              {applications.length} candidates loaded
+            </span>
+          </div>
+        </div>
+
         {/* TAB 1: Visual Stage Pipeline Kanban */}
         {activeTab === "pipeline" && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -277,6 +350,7 @@ export default function SelectionProcessPage() {
               const stageApps = applications.filter(
                 (a) => a.currentStageId === stage.id || (!a.currentStageId && idx === 0)
               );
+              const stageTotalCount = stageCounts[stage.id] !== undefined ? stageCounts[stage.id] : stageApps.length;
               const nextStage = stages[idx + 1];
 
               return (
@@ -292,8 +366,8 @@ export default function SelectionProcessPage() {
                         </div>
                         <h2 className="font-extrabold text-xs text-foreground truncate">{stage.name}</h2>
                       </div>
-                      <Badge variant="purple" size="sm">
-                        {stageApps.length}
+                      <Badge variant="purple" size="sm" title={`${stageTotalCount} total candidates in this stage`}>
+                        {stageTotalCount}
                       </Badge>
                     </div>
 
@@ -305,7 +379,7 @@ export default function SelectionProcessPage() {
                     <div className="space-y-2 pt-2 border-t border-border">
                       {stageApps.length === 0 ? (
                         <div className="p-4 text-center text-[11px] text-muted-foreground rounded-xl bg-muted/30">
-                          No candidates in this round.
+                          {debouncedSearch ? "No matching candidates." : "No candidates in this round."}
                         </div>
                       ) : (
                         stageApps.map((app) => (
@@ -342,10 +416,24 @@ export default function SelectionProcessPage() {
                             {/* Advance stage button */}
                             {nextStage && (
                               <button
-                                onClick={() => handleAdvanceStage(app.id, nextStage)}
-                                className="w-full h-7 rounded-lg text-[11px] font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1 transition-colors"
+                                disabled={isAdvancing[app.id]}
+                                onClick={() => handleAdvanceStage(app, nextStage)}
+                                className={`w-full h-7 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-colors ${
+                                  isAdvancing[app.id]
+                                    ? "bg-blue-600/60 text-white/80 cursor-wait"
+                                    : "bg-blue-600 hover:bg-blue-700 text-white"
+                                }`}
                               >
-                                Advance to Stage {nextStage.order} <ArrowRight className="w-3 h-3" />
+                                {isAdvancing[app.id] ? (
+                                  <>
+                                    <RefreshCw className="w-3 h-3 animate-spin" />
+                                    <span>Advancing...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    Advance to Stage {nextStage.order} <ArrowRight className="w-3 h-3" />
+                                  </>
+                                )}
                               </button>
                             )}
                           </div>
@@ -580,7 +668,7 @@ export default function SelectionProcessPage() {
               <Button variant="outline" size="sm" onClick={() => setIsScoreModalOpen(false)}>
                 Cancel
               </Button>
-              <Button variant="gradient" size="sm" onClick={handleRecordScore}>
+              <Button variant="gradient" size="sm" isLoading={isSavingScore} onClick={handleRecordScore}>
                 Save Score
               </Button>
             </div>
@@ -661,7 +749,7 @@ export default function SelectionProcessPage() {
               <Button variant="outline" size="sm" onClick={() => setIsEvalModalOpen(false)}>
                 Cancel
               </Button>
-              <Button variant="gradient" size="sm" onClick={handleRecordEvaluation}>
+              <Button variant="gradient" size="sm" isLoading={isSavingEval} onClick={handleRecordEvaluation}>
                 Submit Evaluation
               </Button>
             </div>

@@ -49,6 +49,7 @@ type TabCategory = "ALL" | "READY" | "UPCOMING" | "IN_PROGRESS" | "COMPLETED" | 
 export default function StudentAssessmentsPage() {
   const [assessments, setAssessments] = useState<EnrichedAssessment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabCategory>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -58,14 +59,19 @@ export default function StudentAssessmentsPage() {
 
   const fetchAssessments = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const res = await fetch("/api/student/assessments");
       if (res.ok) {
         const data = await res.json();
         setAssessments(data.assessments || []);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setError(errData.error || "Failed to load assigned assessments. Please try again.");
       }
     } catch (err) {
       console.error("Failed to load assessments:", err);
+      setError("Unable to connect to the assessment service. Please check your network connection.");
     } finally {
       setIsLoading(false);
     }
@@ -73,11 +79,12 @@ export default function StudentAssessmentsPage() {
 
   // Helper to categorize each assessment into defined lifecycle states
   const getCategoryForAssessment = (ass: EnrichedAssessment): TabCategory => {
-    const isEvaluated =
+    const isCompleted =
       ass.candidateScore !== undefined ||
       ass.attemptStatus === "SUBMITTED" ||
-      ass.attemptStatus === "AUTO_SUBMITTED";
-    if (isEvaluated) return "COMPLETED";
+      ass.attemptStatus === "AUTO_SUBMITTED" ||
+      ass.attemptStatus === "TERMINATED";
+    if (isCompleted) return "COMPLETED";
     if (ass.attemptStatus === "ACTIVE" || ass.attemptStatus === "PAUSED") return "IN_PROGRESS";
 
     const now = Date.now();
@@ -195,8 +202,17 @@ export default function StudentAssessmentsPage() {
         {isLoading ? (
           <div className="py-20 text-center">
             <div className="inline-block w-8 h-8 border-3 border-purple-600 border-t-transparent rounded-full animate-spin mb-3" />
-            <p className="text-xs text-muted-foreground">Loading assigned assessments...</p>
+            <p className="text-xs text-muted-foreground font-semibold">Loading assigned assessments...</p>
           </div>
+        ) : error ? (
+          <Card className="p-8 text-center border border-rose-500/20 bg-rose-500/5 rounded-3xl space-y-3">
+            <AlertCircle className="w-10 h-10 text-rose-500 mx-auto" />
+            <h3 className="font-bold text-sm text-foreground">Error Loading Assessments</h3>
+            <p className="text-xs text-muted-foreground max-w-sm mx-auto">{error}</p>
+            <Button variant="outline" size="sm" onClick={fetchAssessments} className="mt-2">
+              Retry
+            </Button>
+          </Card>
         ) : filteredAssessments.length === 0 ? (
           <Card className="p-12 text-center border-dashed border-2 border-border/80 rounded-3xl">
             <FileText className="w-10 h-10 text-muted-foreground/50 mx-auto mb-3" />
@@ -222,18 +238,44 @@ export default function StudentAssessmentsPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
             {filteredAssessments.map((ass) => {
-              const isEvaluated =
-                ass.candidateScore !== undefined ||
-                ass.attemptStatus === "SUBMITTED" ||
-                ass.attemptStatus === "AUTO_SUBMITTED";
+              const hasOfficialResult = ass.candidateScore !== undefined && ass.candidateScore !== null;
+              const isPendingEvaluation =
+                !hasOfficialResult &&
+                (ass.attemptStatus === "SUBMITTED" || ass.attemptStatus === "AUTO_SUBMITTED");
               const isTerminated = ass.attemptStatus === "TERMINATED";
-              const hasPassed = ass.passed;
               const isProctored = ass.hasFullProctoring || ass.mode === "PROCTORED";
               const targetId = ass.assessmentConfigId || ass.id;
               const isActive = ass.attemptStatus === "ACTIVE" || ass.attemptStatus === "PAUSED";
               const category = getCategoryForAssessment(ass);
               const isExpired = category === "EXPIRED";
               const isUpcoming = category === "UPCOMING";
+
+              // Defensive score and percentage calculations to ensure data correctness
+              const rawMaxScore =
+                typeof ass.maxScore === "number" && ass.maxScore > 0 ? ass.maxScore : 100;
+              const candidateScore = hasOfficialResult ? Number(ass.candidateScore) : undefined;
+              const passingScore =
+                typeof ass.passingScore === "number"
+                  ? Number(ass.passingScore)
+                  : Math.round(rawMaxScore * 0.75);
+
+              // Safeguard denominator: ensure effectiveMaxScore matches the authoritative score scale
+              const effectiveMaxScore = Math.max(rawMaxScore, candidateScore ?? 0, passingScore ?? 0);
+              const effectivePassingScore = Math.min(passingScore, effectiveMaxScore);
+
+              // Compute percentage consistently with guaranteed 0-100% boundary
+              const effectivePercentage =
+                candidateScore !== undefined && effectiveMaxScore > 0
+                  ? Math.min(100, Math.max(0, Math.round((candidateScore / effectiveMaxScore) * 100)))
+                  : undefined;
+
+              // Authoritative pass/fail determination
+              const hasPassed =
+                candidateScore !== undefined
+                  ? ass.passed !== undefined
+                    ? Boolean(ass.passed)
+                    : candidateScore >= effectivePassingScore
+                  : false;
 
               return (
                 <Card
@@ -244,7 +286,7 @@ export default function StudentAssessmentsPage() {
                   <div className="space-y-3.5">
                     {/* Header */}
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
                         <div className="w-10 h-10 rounded-2xl bg-muted border border-border p-1 overflow-hidden shrink-0 flex items-center justify-center">
                           {ass.companyLogo ? (
                             // eslint-disable-next-line @next/next/no-img-element
@@ -257,26 +299,30 @@ export default function StudentAssessmentsPage() {
                             <Building2 className="w-5 h-5 text-muted-foreground" />
                           )}
                         </div>
-                        <div className="min-w-0">
-                          <h3 className="font-bold text-sm sm:text-base text-foreground leading-snug truncate">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="font-bold text-sm sm:text-base text-foreground leading-snug line-clamp-2 break-words">
                             {ass.assessmentName}
                           </h3>
-                          <p className="text-xs text-muted-foreground truncate font-medium">
+                          <p className="text-xs text-muted-foreground truncate font-medium mt-0.5">
                             {ass.company} • Part of {ass.driveTitle}
                           </p>
                         </div>
                       </div>
 
-                      {isEvaluated ? (
+                      {hasOfficialResult ? (
                         hasPassed ? (
                           <Badge variant="emerald" size="sm" className="font-bold shrink-0">
                             Passed ✓
                           </Badge>
                         ) : (
                           <Badge variant="rose" size="sm" className="font-bold shrink-0">
-                            Evaluated
+                            Failed ✗
                           </Badge>
                         )
+                      ) : isPendingEvaluation ? (
+                        <Badge variant="lavender" size="sm" className="font-bold shrink-0 text-amber-500 border-amber-500/30">
+                          Pending Review
+                        </Badge>
                       ) : isTerminated ? (
                         <Badge variant="rose" size="sm" className="font-bold shrink-0">
                           Terminated
@@ -318,7 +364,7 @@ export default function StudentAssessmentsPage() {
                         </span>
                       )}
                       <span className="px-2.5 py-1 rounded-xl bg-muted text-muted-foreground font-semibold">
-                        Passing Mark: {ass.passingScore}/{ass.maxScore}
+                        Passing Mark: {effectivePassingScore} / {effectiveMaxScore}
                       </span>
                     </div>
 
@@ -329,8 +375,8 @@ export default function StudentAssessmentsPage() {
                       </p>
                     )}
 
-                    {/* Score summary if evaluated */}
-                    {isEvaluated && (
+                    {/* Score summary if official result is available */}
+                    {hasOfficialResult && (
                       <div className="p-3 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-xs flex items-center justify-between">
                         <span className="font-bold text-foreground flex items-center gap-1.5">
                           <Award className="w-4 h-4 text-purple-600 dark:text-purple-400" />
@@ -338,14 +384,27 @@ export default function StudentAssessmentsPage() {
                         </span>
                         <div className="flex items-center gap-2">
                           <strong className="text-sm font-black text-purple-600 dark:text-purple-400">
-                            {ass.candidateScore} / {ass.maxScore}
+                            {candidateScore} / {effectiveMaxScore}
                           </strong>
-                          {ass.percentage !== undefined && (
+                          {effectivePercentage !== undefined && (
                             <span className="text-xs font-bold text-muted-foreground">
-                              ({ass.percentage}%)
+                              ({effectivePercentage}%)
                             </span>
                           )}
                         </div>
+                      </div>
+                    )}
+
+                    {/* Pending review indicator */}
+                    {isPendingEvaluation && (
+                      <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs flex items-center justify-between">
+                        <span className="font-bold text-foreground flex items-center gap-1.5">
+                          <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                          Evaluation Status:
+                        </span>
+                        <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                          Submission Under Review
+                        </span>
                       </div>
                     )}
                   </div>
@@ -353,8 +412,10 @@ export default function StudentAssessmentsPage() {
                   {/* Footer Action Links */}
                   <div className="pt-3 border-t border-border/60 flex flex-wrap items-center justify-between gap-2 text-xs">
                     <span className="text-muted-foreground text-[11px]">
-                      {isEvaluated
+                      {hasOfficialResult
                         ? "Official Result Available"
+                        : isPendingEvaluation
+                        ? "Evaluation in Progress"
                         : isTerminated
                         ? "Attempt Terminated"
                         : isActive
@@ -373,7 +434,7 @@ export default function StudentAssessmentsPage() {
                         </Button>
                       </Link>
 
-                      {isEvaluated ? (
+                      {hasOfficialResult ? (
                         <Link href={`/dashboard/assessments/${targetId}/result`}>
                           <Button variant="gradient" size="sm" rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
                             View Result

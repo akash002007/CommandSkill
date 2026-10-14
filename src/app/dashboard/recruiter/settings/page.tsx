@@ -71,9 +71,9 @@ export default function RecruiterSettingsPage() {
     }
   };
 
-  const handleRoleSwitch = () => {
-    switchRole("student");
-    router.push("/dashboard");
+  const handleRoleSwitch = async () => {
+    const res = await switchRole("student");
+    window.location.href = res?.redirectUrl || "/dashboard";
   };
 
   return (

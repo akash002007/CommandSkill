@@ -24,6 +24,8 @@ import {
   Eye,
   Radio,
   XCircle,
+  CameraOff,
+  MicOff,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -49,20 +51,28 @@ export default function CandidateTakeAssessmentPage({
   const [assessment, setAssessment] = useState<any>(null);
   const [attempt, setAttempt] = useState<AssessmentAttempt | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Environment & Hardware Check State
   const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isCameraStreaming, setIsCameraStreaming] = useState(false);
+  const [isCameraLoading, setIsCameraLoading] = useState(false);
   const [micReady, setMicReady] = useState(false);
+  const [micError, setMicError] = useState<string | null>(null);
+  const [isMicLoading, setIsMicLoading] = useState(false);
   const [screenReady, setScreenReady] = useState(false);
   const [fullscreenReady, setFullscreenReady] = useState(false);
   const [isFullscreenActive, setIsFullscreenActive] = useState(false);
   const [consentGiven, setConsentGiven] = useState(false);
+  const lastViolationMapRef = useRef<Record<string, number>>({});
 
   // Dedicated Hardware Media Stream Refs (Guarantees fresh access during callbacks and unmount)
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const examVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // Exam Execution State
   const [isExamActive, setIsExamActive] = useState(false);
@@ -148,8 +158,28 @@ export default function CandidateTakeAssessmentPage({
       console.error("Error attempting exitFullscreen:", err);
     }
 
+    if (videoPreviewRef.current) {
+      try {
+        videoPreviewRef.current.srcObject = null;
+      } catch (e) {
+        console.warn("Error detaching videoPreviewRef:", e);
+      }
+    }
+    if (examVideoRef.current) {
+      try {
+        examVideoRef.current.srcObject = null;
+      } catch (e) {
+        console.warn("Error detaching examVideoRef:", e);
+      }
+    }
+
     setCameraReady(false);
+    setIsCameraStreaming(false);
+    setCameraError(null);
+    setIsCameraLoading(false);
     setMicReady(false);
+    setMicError(null);
+    setIsMicLoading(false);
     setScreenReady(false);
     setIsFullscreenActive(false);
   }, []);
@@ -168,6 +198,7 @@ export default function CandidateTakeAssessmentPage({
 
   const fetchAssessmentInfo = async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const res = await fetch(`/api/student/assessments/${resolvedParams.id}`);
       if (res.ok) {
@@ -206,11 +237,16 @@ export default function CandidateTakeAssessmentPage({
           }
         }
       } else {
-        toastError("Assessment not found or unauthorized.");
+        const errJson = await res.json().catch(() => ({}));
+        const errMsg = errJson.error || "Assessment not found or unauthorized.";
+        setLoadError(errMsg);
+        toastError(errMsg);
       }
     } catch (err) {
       console.error(err);
-      toastError("Failed to load assessment.");
+      const errMsg = "Failed to load assessment. Please check your connection.";
+      setLoadError(errMsg);
+      toastError(errMsg);
     } finally {
       setIsLoading(false);
     }
@@ -309,53 +345,447 @@ export default function CandidateTakeAssessmentPage({
     };
   }, [isExamActive, isTerminated, submissionResult, assessment, attempt?.id]);
 
-  // Hardware Request Handlers
-  const requestCamera = async (): Promise<boolean> => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 } },
-      });
-      cameraStreamRef.current = stream;
-      setCameraReady(true);
+  // =========================================================================
+  // AUTHORITATIVE DEDUPLICATED INTEGRITY VIOLATION SERVICE
+  // =========================================================================
+  const logIntegritySignal = useCallback(
+    async (eventType: IntegrityEventType, reason: string) => {
+      if (!attempt || !isExamActive || isTerminated) return;
 
-      if (videoPreviewRef.current) {
-        videoPreviewRef.current.srcObject = stream;
+      // Deduplicate continuous repeated signals of the same eventType within 5 seconds
+      const now = Date.now();
+      const lastLogged = lastViolationMapRef.current[eventType];
+      if (lastLogged && now - lastLogged < 5000) {
+        return;
+      }
+      lastViolationMapRef.current[eventType] = now;
+
+      try {
+        const res = await fetch(`/api/student/assessments/${resolvedParams.id}/integrity`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            attemptId: attempt.id,
+            eventType,
+            severity: "HIGH",
+            metadata: { reason },
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setViolationCount(data.violationCount);
+
+          if (data.actionTaken === "TERMINATE" || data.attemptStatus === "TERMINATED") {
+            setIsTerminated(true);
+            setIsExamActive(false);
+            setTerminationReason("Assessment terminated due to repeated proctoring violations.");
+            cleanupExamSession();
+          } else if (data.actionTaken === "PAUSE" || data.attemptStatus === "PAUSED") {
+            setIsPaused(true);
+            setPauseReason(reason);
+          } else if (data.actionTaken === "REQUIRE_RECOVERY") {
+            setIsPaused(false);
+            setPauseReason("");
+          } else if (data.actionTaken === "WARNING" || data.actionTaken === "FINAL_WARNING") {
+            setWarningMessage(
+              `${data.actionTaken === "FINAL_WARNING" ? "FINAL WARNING" : "INTEGRITY WARNING"}: ${reason}. (Violation ${data.violationCount} recorded)`
+            );
+          }
+        }
+      } catch (err) {
+        console.error("Failed to log integrity event:", err);
+      }
+    },
+    [attempt, isExamActive, isTerminated, resolvedParams.id, cleanupExamSession]
+  );
+
+  // =========================================================================
+  // HARDWARE STREAM BINDING & PLAYBACK SERVICE
+  // =========================================================================
+  const attachStreamToVideo = useCallback(
+    (videoEl: HTMLVideoElement | null, stream: MediaStream | null, onStreamingChange?: (active: boolean) => void) => {
+      if (!videoEl) return;
+
+      if (!stream) {
+        try {
+          videoEl.srcObject = null;
+        } catch (e) {
+          /* ignore */
+        }
+        onStreamingChange?.(false);
+        return;
       }
 
-      // Track interruption listener
-      stream.getVideoTracks()[0].onended = () => {
-        setCameraReady(false);
-        if (isExamActive && !isTerminated && !submissionResult) {
-          setIsPaused(true);
-          setPauseReason("Camera stream was interrupted or disconnected.");
-          logIntegritySignal("CAMERA_STOPPED", "Camera stream disconnected");
+      if (videoEl.srcObject !== stream) {
+        videoEl.srcObject = stream;
+      }
+
+      // Explicitly set DOM properties for bullet-proof autoplay across browsers
+      videoEl.defaultMuted = true;
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+      videoEl.autoplay = true;
+
+      const verifyPlayback = () => {
+        const playPromise = videoEl.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              const checkFrames = () => {
+                if (
+                  videoEl &&
+                  videoEl.videoWidth > 0 &&
+                  videoEl.videoHeight > 0 &&
+                  !videoEl.paused &&
+                  !videoEl.ended &&
+                  videoEl.readyState >= 2
+                ) {
+                  onStreamingChange?.(true);
+                } else if (videoEl && !videoEl.paused && !videoEl.ended) {
+                  requestAnimationFrame(checkFrames);
+                }
+              };
+              checkFrames();
+            })
+            .catch((err) => {
+              console.warn("Camera preview playback deferred or blocked:", err);
+              onStreamingChange?.(false);
+            });
         }
       };
+
+      videoEl.onloadedmetadata = () => {
+        verifyPlayback();
+      };
+
+      videoEl.onplaying = () => {
+        if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+          onStreamingChange?.(true);
+        }
+      };
+
+      videoEl.onpause = () => {
+        onStreamingChange?.(false);
+      };
+
+      videoEl.onwaiting = () => {
+        onStreamingChange?.(false);
+      };
+
+      if (videoEl.readyState >= 1) {
+        verifyPlayback();
+      }
+    },
+    []
+  );
+
+  // Callback ref for Pre-Flight Video Preview Element (Attaches stream immediately upon DOM mount)
+  const setVideoPreviewRef = useCallback(
+    (node: HTMLVideoElement | null) => {
+      videoPreviewRef.current = node;
+      if (node && cameraStreamRef.current) {
+        attachStreamToVideo(node, cameraStreamRef.current, setIsCameraStreaming);
+      }
+    },
+    [attachStreamToVideo]
+  );
+
+  // Callback ref for in-exam proctoring video preview element
+  const setExamVideoRef = useCallback(
+    (node: HTMLVideoElement | null) => {
+      examVideoRef.current = node;
+      if (node && cameraStreamRef.current) {
+        attachStreamToVideo(node, cameraStreamRef.current);
+      }
+    },
+    [attachStreamToVideo]
+  );
+
+  // Synchronize video element srcObject when cameraReady or isExamActive state changes
+  useEffect(() => {
+    if (cameraReady && cameraStreamRef.current) {
+      if (videoPreviewRef.current) {
+        attachStreamToVideo(videoPreviewRef.current, cameraStreamRef.current, setIsCameraStreaming);
+      }
+      if (examVideoRef.current) {
+        attachStreamToVideo(examVideoRef.current, cameraStreamRef.current);
+      }
+    }
+  }, [cameraReady, isExamActive, attachStreamToVideo]);
+
+  // =========================================================================
+  // PERMISSION REVOCATION & HARDWARE TERMINATION HANDLERS
+  // =========================================================================
+  const handleCameraRevoked = useCallback(
+    (reason = "Camera access was disconnected or revoked.") => {
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch (e) {
+            /* ignore */
+          }
+        });
+        cameraStreamRef.current = null;
+      }
+      if (videoPreviewRef.current) {
+        try {
+          videoPreviewRef.current.srcObject = null;
+        } catch (e) {
+          /* ignore */
+        }
+      }
+      if (examVideoRef.current) {
+        try {
+          examVideoRef.current.srcObject = null;
+        } catch (e) {
+          /* ignore */
+        }
+      }
+
+      setCameraReady(false);
+      setIsCameraStreaming(false);
+      setCameraError(reason);
+
+      if (isExamActive && !isTerminated && !submissionResult) {
+        setIsPaused(true);
+        setPauseReason(reason);
+        logIntegritySignal("CAMERA_STOPPED", reason);
+      }
+    },
+    [isExamActive, isTerminated, submissionResult, logIntegritySignal]
+  );
+
+  const handleMicRevoked = useCallback(
+    (reason = "Microphone access was disconnected or revoked.") => {
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch (e) {
+            /* ignore */
+          }
+        });
+        micStreamRef.current = null;
+      }
+
+      setMicReady(false);
+      setMicError(reason);
+
+      if (isExamActive && !isTerminated && !submissionResult) {
+        setIsPaused(true);
+        setPauseReason(reason);
+        logIntegritySignal("MICROPHONE_STOPPED", reason);
+      }
+    },
+    [isExamActive, isTerminated, submissionResult, logIntegritySignal]
+  );
+
+  // Monitor browser address-bar permission toggles dynamically
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.permissions?.query) return;
+
+    let cameraStatus: PermissionStatus | null = null;
+    let micStatus: PermissionStatus | null = null;
+
+    navigator.permissions
+      .query({ name: "camera" as PermissionName })
+      .then((status) => {
+        cameraStatus = status;
+        status.onchange = () => {
+          if (status.state === "denied") {
+            handleCameraRevoked("Camera permission was revoked in browser settings.");
+          }
+        };
+      })
+      .catch(() => {
+        // Query unsupported in some browser configurations
+      });
+
+    navigator.permissions
+      .query({ name: "microphone" as PermissionName })
+      .then((status) => {
+        micStatus = status;
+        status.onchange = () => {
+          if (status.state === "denied") {
+            handleMicRevoked("Microphone permission was revoked in browser settings.");
+          }
+        };
+      })
+      .catch(() => {
+        // Query unsupported in some browser configurations
+      });
+
+    return () => {
+      if (cameraStatus) cameraStatus.onchange = null;
+      if (micStatus) micStatus.onchange = null;
+    };
+  }, [handleCameraRevoked, handleMicRevoked]);
+
+  // =========================================================================
+  // HARDWARE REQUEST HANDLERS
+  // =========================================================================
+  const requestCamera = async (): Promise<boolean> => {
+    setIsCameraLoading(true);
+    setCameraError(null);
+
+    // Reuse existing active stream if already live and valid
+    const existing = cameraStreamRef.current;
+    if (existing) {
+      const activeVideoTrack = existing.getVideoTracks().find((t) => t.readyState === "live" && t.enabled);
+      if (activeVideoTrack) {
+        setCameraReady(true);
+        setIsCameraLoading(false);
+        if (videoPreviewRef.current) {
+          attachStreamToVideo(videoPreviewRef.current, existing, setIsCameraStreaming);
+        }
+        return true;
+      }
+    }
+
+    try {
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Webcam access is not supported by this browser.");
+      }
+
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: "user",
+          },
+        });
+      } catch (constraintErr: any) {
+        if (constraintErr?.name === "OverconstrainedError") {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        } else {
+          throw constraintErr;
+        }
+      }
+
+      const videoTracks = stream.getVideoTracks();
+      if (!videoTracks || videoTracks.length === 0) {
+        throw new Error("No active video tracks found in camera stream.");
+      }
+
+      const videoTrack = videoTracks[0];
+
+      videoTrack.onended = () => {
+        handleCameraRevoked("Webcam device was disconnected or permission revoked.");
+      };
+
+      videoTrack.onmute = () => {
+        setIsCameraStreaming(false);
+      };
+
+      videoTrack.onunmute = () => {
+        if (videoTrack.readyState === "live") {
+          setIsCameraStreaming(true);
+        }
+      };
+
+      cameraStreamRef.current = stream;
+      setCameraReady(true);
+      setCameraError(null);
+
+      if (videoPreviewRef.current) {
+        attachStreamToVideo(videoPreviewRef.current, stream, setIsCameraStreaming);
+      }
+
       return true;
-    } catch (err) {
-      toastError("Camera permission denied. Please allow camera access to proceed.");
+    } catch (err: any) {
+      console.error("[requestCamera] Camera access failure:", err);
+      let errMsg = "Camera permission was denied. Please allow camera access in your browser settings.";
+
+      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
+        errMsg = "Camera permission was denied. Please grant camera permission in your browser address bar and try again.";
+      } else if (err?.name === "NotFoundError" || err?.name === "DevicesNotFoundError") {
+        errMsg = "No camera was detected. Please connect a working webcam to your device.";
+      } else if (err?.name === "NotReadableError" || err?.name === "TrackStartError") {
+        errMsg = "Camera is currently in use by another application or tab. Please close other camera apps and retry.";
+      } else if (err?.message) {
+        errMsg = err.message;
+      }
+
+      setCameraReady(false);
+      setIsCameraStreaming(false);
+      setCameraError(errMsg);
+      toastError(errMsg);
       return false;
+    } finally {
+      setIsCameraLoading(false);
     }
   };
 
   const requestMicrophone = async (): Promise<boolean> => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micStreamRef.current = stream;
-      setMicReady(true);
+    setIsMicLoading(true);
+    setMicError(null);
 
-      stream.getAudioTracks()[0].onended = () => {
+    // Reuse existing active stream if already live
+    const existing = micStreamRef.current;
+    if (existing) {
+      const activeAudioTrack = existing.getAudioTracks().find((t) => t.readyState === "live" && t.enabled);
+      if (activeAudioTrack) {
+        setMicReady(true);
+        setIsMicLoading(false);
+        return true;
+      }
+    }
+
+    try {
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Microphone access is not supported by this browser.");
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioTracks = stream.getAudioTracks();
+      if (!audioTracks || audioTracks.length === 0) {
+        throw new Error("No active audio tracks found in microphone stream.");
+      }
+
+      const audioTrack = audioTracks[0];
+
+      audioTrack.onended = () => {
+        handleMicRevoked("Microphone device was disconnected or permission revoked.");
+      };
+
+      audioTrack.onmute = () => {
         setMicReady(false);
-        if (isExamActive && !isTerminated && !submissionResult) {
-          setIsPaused(true);
-          setPauseReason("Microphone stream was interrupted or disconnected.");
-          logIntegritySignal("MICROPHONE_STOPPED", "Microphone stream interrupted");
+      };
+
+      audioTrack.onunmute = () => {
+        if (audioTrack.readyState === "live") {
+          setMicReady(true);
         }
       };
+
+      micStreamRef.current = stream;
+      setMicReady(true);
+      setMicError(null);
       return true;
-    } catch (err) {
-      toastError("Microphone permission denied. Please allow microphone access.");
+    } catch (err: any) {
+      console.error("[requestMicrophone] Mic access failure:", err);
+      let errMsg = "Microphone permission was denied. Please allow microphone access in your browser settings.";
+
+      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
+        errMsg = "Microphone permission was denied. Please grant microphone permission in your browser address bar.";
+      } else if (err?.name === "NotFoundError" || err?.name === "DevicesNotFoundError") {
+        errMsg = "No microphone was detected. Please connect a working microphone.";
+      } else if (err?.name === "NotReadableError" || err?.name === "TrackStartError") {
+        errMsg = "Microphone is in use by another application. Please close other audio apps and retry.";
+      } else if (err?.message) {
+        errMsg = err.message;
+      }
+
+      setMicReady(false);
+      setMicError(errMsg);
+      toastError(errMsg);
       return false;
+    } finally {
+      setIsMicLoading(false);
     }
   };
 
@@ -491,48 +921,6 @@ export default function CandidateTakeAssessmentPage({
     }
   };
 
-  // Authoritative Centralized Integrity Violation Signal
-  const logIntegritySignal = async (eventType: IntegrityEventType, reason: string) => {
-    if (!attempt || !isExamActive || isTerminated) return;
-
-    try {
-      const res = await fetch(`/api/student/assessments/${resolvedParams.id}/integrity`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          attemptId: attempt.id,
-          eventType,
-          severity: "HIGH",
-          metadata: { reason },
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setViolationCount(data.violationCount);
-
-        if (data.actionTaken === "TERMINATE" || data.attemptStatus === "TERMINATED") {
-          setIsTerminated(true);
-          setIsExamActive(false);
-          setTerminationReason("Assessment terminated due to repeated proctoring violations.");
-          cleanupExamSession();
-        } else if (data.actionTaken === "PAUSE" || data.attemptStatus === "PAUSED") {
-          setIsPaused(true);
-          setPauseReason(reason);
-        } else if (data.actionTaken === "REQUIRE_RECOVERY") {
-          setIsPaused(false);
-          setPauseReason("");
-        } else if (data.actionTaken === "WARNING" || data.actionTaken === "FINAL_WARNING") {
-          setWarningMessage(
-            `${data.actionTaken === "FINAL_WARNING" ? "FINAL WARNING" : "INTEGRITY WARNING"}: ${reason}. (Violation ${data.violationCount} recorded)`
-          );
-        }
-      }
-    } catch (err) {
-      console.error("Failed to log integrity event:", err);
-    }
-  };
-
   // Submission Handler with Centralized Cleanup
   const handleSubmitExam = async () => {
     if (!attempt || isSubmitting) return;
@@ -595,12 +983,43 @@ export default function CandidateTakeAssessmentPage({
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  if (isLoading || !assessment) {
+  if (isLoading) {
     return (
       <RoleGuard allowedRole="student">
         <div className="min-h-screen w-full flex flex-col items-center justify-center bg-background text-foreground">
           <div className="w-10 h-10 border-3 border-purple-600 border-t-transparent rounded-full animate-spin mb-4" />
           <p className="text-sm font-semibold text-muted-foreground">Initializing CommandSkill Secure Assessment Engine...</p>
+        </div>
+      </RoleGuard>
+    );
+  }
+
+  if (!assessment) {
+    return (
+      <RoleGuard allowedRole="student">
+        <div className="min-h-screen w-full flex items-center justify-center p-4 bg-background">
+          <Card className="p-8 border-border bg-card max-w-md w-full text-center space-y-6 shadow-2xl rounded-3xl">
+            <div className="w-16 h-16 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 mx-auto flex items-center justify-center">
+              <AlertCircle className="w-8 h-8" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold text-foreground">Assessment Unavailable</h2>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {loadError || "The assessment you requested could not be located or you are not authorized to access it."}
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+              <Button variant="outline" size="sm" onClick={() => fetchAssessmentInfo()}>
+                <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                Try Again
+              </Button>
+              <Link href="/dashboard/assessments">
+                <Button variant="gradient" size="sm">
+                  Back to Assessments
+                </Button>
+              </Link>
+            </div>
+          </Card>
         </div>
       </RoleGuard>
     );
@@ -752,52 +1171,99 @@ export default function CandidateTakeAssessmentPage({
               {/* Hardware Checks */}
               <div className="space-y-3">
                 {/* Camera Check */}
-                <div className="p-4 rounded-2xl border border-border bg-background flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center">
-                      <Camera className="w-5 h-5" />
+                <div className="p-4 rounded-2xl border border-border bg-background flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center">
+                        <Camera className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm text-foreground">Webcam Stream</h4>
+                        <p className="text-xs text-muted-foreground">
+                          {assessment?.proctoringConfig?.cameraRequired ? "Mandatory for proctoring" : "Optional verification"}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h4 className="font-bold text-sm text-foreground">Webcam Stream</h4>
-                      <p className="text-xs text-muted-foreground">
-                        {assessment?.proctoringConfig?.cameraRequired ? "Mandatory for proctoring" : "Optional verification"}
-                      </p>
-                    </div>
+
+                    {cameraReady ? (
+                      <Badge variant="emerald" size="sm" className="gap-1 font-bold">
+                        <Check className="w-3.5 h-3.5" /> Ready
+                      </Badge>
+                    ) : (
+                      <Button variant="outline" size="sm" onClick={requestCamera} disabled={isCameraLoading}>
+                        {isCameraLoading ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                            Connecting...
+                          </>
+                        ) : (
+                          "Enable Camera"
+                        )}
+                      </Button>
+                    )}
                   </div>
 
-                  {cameraReady ? (
-                    <Badge variant="emerald" size="sm" className="gap-1 font-bold">
-                      <Check className="w-3.5 h-3.5" /> Ready
-                    </Badge>
-                  ) : (
-                    <Button variant="outline" size="sm" onClick={requestCamera}>
-                      Enable Camera
-                    </Button>
+                  {cameraError && (
+                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-600 flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <span>{cameraError}</span>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={requestCamera} className="h-6 text-xs px-2 text-rose-600 hover:text-rose-700">
+                        Retry
+                      </Button>
+                    </div>
                   )}
                 </div>
 
                 {/* Microphone Check */}
-                <div className="p-4 rounded-2xl border border-border bg-background flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center">
-                      <Mic className="w-5 h-5" />
+                <div className="p-4 rounded-2xl border border-border bg-background flex flex-col gap-3 overflow-hidden">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center shrink-0">
+                        <Mic className="w-5 h-5 shrink-0" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm text-foreground">Microphone Audio</h4>
+                        <p className="text-xs text-muted-foreground">
+                          {assessment?.proctoringConfig?.microphoneRequired ? "Mandatory for proctoring" : "Optional audio verification"}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h4 className="font-bold text-sm text-foreground">Microphone Audio</h4>
-                      <p className="text-xs text-muted-foreground">
-                        {assessment?.proctoringConfig?.microphoneRequired ? "Mandatory for proctoring" : "Optional audio verification"}
-                      </p>
-                    </div>
+
+                    {micReady ? (
+                      <Badge variant="emerald" size="sm" className="gap-1 font-bold">
+                        <Check className="w-3.5 h-3.5" /> Ready
+                      </Badge>
+                    ) : (
+                      <Button variant="outline" size="sm" onClick={requestMicrophone} disabled={isMicLoading}>
+                        {isMicLoading ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                            Connecting...
+                          </>
+                        ) : (
+                          "Enable Mic"
+                        )}
+                      </Button>
+                    )}
                   </div>
 
-                  {micReady ? (
-                    <Badge variant="emerald" size="sm" className="gap-1 font-bold">
-                      <Check className="w-3.5 h-3.5" /> Ready
-                    </Badge>
-                  ) : (
-                    <Button variant="outline" size="sm" onClick={requestMicrophone}>
-                      Enable Mic
-                    </Button>
+                  {micError && (
+                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-600 dark:text-rose-400 flex items-start gap-2 overflow-hidden">
+                      <MicOff className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <span className="break-words">{micError}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={requestMicrophone}
+                        className="h-6 text-xs px-2 text-rose-600 hover:text-rose-700 shrink-0"
+                      >
+                        Retry
+                      </Button>
+                    </div>
                   )}
                 </div>
 
@@ -843,21 +1309,63 @@ export default function CandidateTakeAssessmentPage({
                 </div>
               </div>
 
-              {/* Webcam Live Preview if active */}
-              {cameraReady && (
-                <div className="w-48 h-32 rounded-2xl bg-black overflow-hidden border border-border mx-auto relative shadow-inner">
-                  <video
-                    ref={videoPreviewRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className="w-full h-full object-cover"
-                  />
-                  <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded-lg bg-black/70 text-[10px] text-white font-bold">
+              {/* Webcam Live Preview (Stable Mounted Container) */}
+              <div className="w-48 h-32 rounded-2xl bg-zinc-950/90 dark:bg-black border border-border mx-auto relative overflow-hidden shadow-inner flex items-center justify-center">
+                <video
+                  ref={setVideoPreviewRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className={`w-full h-full object-cover -scale-x-100 transition-opacity duration-300 ${
+                    cameraReady && isCameraStreaming ? "opacity-100" : "opacity-0"
+                  }`}
+                />
+                {/* Active Live Indicator Badge */}
+                {cameraReady && isCameraStreaming && (
+                  <span className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-black/80 text-[10px] text-white font-bold backdrop-blur-sm border border-white/10 shadow-sm pointer-events-none">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     Webcam Active
                   </span>
-                </div>
-              )}
+                )}
+                {/* Loading / Connecting state */}
+                {isCameraLoading && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/80 backdrop-blur-xs text-white text-xs gap-2 p-3 text-center">
+                    <RefreshCw className="w-5 h-5 animate-spin text-purple-400" />
+                    <span className="font-medium text-[11px]">Connecting camera feed...</span>
+                  </div>
+                )}
+                {/* Error / Revocation state */}
+                {!isCameraLoading && cameraError && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/90 text-rose-300 text-xs gap-1.5 p-3 text-center">
+                    <div className="w-7 h-7 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center mb-0.5">
+                      <CameraOff className="w-3.5 h-3.5 shrink-0" />
+                    </div>
+                    <span className="font-bold text-rose-400 text-[11px]">Camera Disconnected</span>
+                    <span className="text-[10px] text-rose-200/80 line-clamp-2 max-w-[170px]">
+                      {cameraError}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={requestCamera}
+                      className="h-5 text-[10px] px-2 mt-0.5 text-rose-300 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30"
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                )}
+                {/* Idle / Uninitialized state */}
+                {!cameraReady && !isCameraLoading && !cameraError && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/20 text-muted-foreground text-xs gap-1.5 p-3 text-center">
+                    <div className="w-8 h-8 rounded-2xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                      <Camera className="w-4 h-4" />
+                    </div>
+                    <span className="text-[10px] font-medium text-muted-foreground">
+                      Camera preview will appear here
+                    </span>
+                  </div>
+                )}
+              </div>
 
               {/* Privacy & Consent Agreement */}
               <div className="p-5 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-900 dark:text-purple-200 space-y-2.5">
@@ -1127,8 +1635,29 @@ export default function CandidateTakeAssessmentPage({
               </div>
             </Card>
 
-            {/* Right: Question Palette Navigator */}
+            {/* Right: Question Palette Navigator & Live Proctoring Camera Feed */}
             <Card className="p-5 border-border bg-card space-y-5 shadow-md rounded-3xl h-fit">
+              {/* In-Exam Live Proctoring Webcam View */}
+              {cameraReady && (
+                <div className="w-full h-32 rounded-2xl bg-black overflow-hidden border border-border relative shadow-inner">
+                  <video
+                    ref={setExamVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover -scale-x-100"
+                    onLoadedMetadata={(e) => {
+                      const v = e.currentTarget;
+                      v.play().catch((err) => console.warn("Exam video play warn:", err));
+                    }}
+                  />
+                  <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-black/75 text-[10px] text-white font-bold backdrop-blur-sm">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>Live Proctoring Active</span>
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
                 <h3 className="font-extrabold text-xs text-foreground uppercase tracking-wider">
                   Question Palette
@@ -1277,21 +1806,29 @@ export default function CandidateTakeAssessmentPage({
                     size="md"
                     onClick={async () => {
                       try {
-                        // 1. Re-check Fullscreen
+                        let fsOk = true;
                         if (!document.fullscreenElement) {
-                          await requestFullscreen();
+                          fsOk = await requestFullscreen();
                         }
-                        // 2. Re-check Camera if required
+
+                        let camOk = true;
                         if (assessment?.proctoringConfig?.cameraRequired && !cameraReady) {
-                          await requestCamera();
+                          camOk = await requestCamera();
                         }
-                        // 3. Re-check Microphone if required
+
+                        let micOk = true;
                         if (assessment?.proctoringConfig?.microphoneRequired && !micReady) {
-                          await requestMicrophone();
+                          micOk = await requestMicrophone();
                         }
-                        // 4. Re-check Screen Share if required
+
+                        let screenOk = true;
                         if (assessment?.proctoringConfig?.entireScreenRequired && !screenReady) {
-                          await requestScreenShare();
+                          screenOk = await requestScreenShare();
+                        }
+
+                        if (!fsOk || !camOk || !micOk || !screenOk) {
+                          toastError("Please satisfy all mandatory hardware and fullscreen requirements to resume.");
+                          return;
                         }
 
                         // Inform server of session recovery

@@ -123,7 +123,7 @@ export async function POST(request: NextRequest) {
       driveId: newDrive.id,
       driveTitle: newDrive.title,
       actorId: auth.recruiter.id,
-      actorName: auth.recruiter.name || "Sarah Chen",
+      actorName: auth.recruiter.name || "Barun",
       actorRole: "RECRUITER",
       action: "DRIVE_CREATED",
       targetType: "DRIVE",

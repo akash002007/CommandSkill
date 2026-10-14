@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
       updateApplicationStatus(
         app.id,
         "IN_SELECTION",
-        auth.recruiter.name || "Sarah Chen",
+        auth.recruiter.name || "Barun",
         `Interview scheduled for ${record.date} at ${record.time}`
       );
     }

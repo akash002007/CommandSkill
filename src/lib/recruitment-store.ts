@@ -26,6 +26,9 @@ interface RecruitmentStoreState {
   interviews: Map<string, CandidateInterviewRecord[]>; // driveId -> interviews
   results: Map<string, RecruitmentResultRecord>; // driveId -> result
   auditLogs: RecruiterAuditLogEntry[];
+  // High-performance query indexes
+  driveAppIndex?: Map<string, Set<string>>; // driveId -> Set of appIds
+  driveStageAppIndex?: Map<string, Set<string>>; // `${driveId}:${stageId}` -> Set of appIds
 }
 
 declare global {
@@ -235,7 +238,7 @@ function initializeRecruitmentStore(): RecruitmentStoreState {
         stageName: drive1Stages[0].name,
         status: "SHORTLISTED",
         timestamp: "2026-03-03T10:00:00.000Z",
-        actor: "Sarah Chen (Recruiter)",
+        actor: "Barun (Recruiter)",
         note: "Shortlisted for Round 2 Assessment.",
       },
       {
@@ -251,7 +254,7 @@ function initializeRecruitmentStore(): RecruitmentStoreState {
         stageName: drive1Stages[2].name,
         status: "INTERVIEW_SCHEDULED",
         timestamp: "2026-03-06T11:00:00.000Z",
-        actor: "Sarah Chen (Recruiter)",
+        actor: "Barun (Recruiter)",
         note: "Scheduled technical interview.",
       },
     ],
@@ -571,7 +574,7 @@ function initializeRecruitmentStore(): RecruitmentStoreState {
       time: "10:00 AM",
       duration: "45 mins",
       meetingLink: "https://meet.google.com/stripe-tech-rahul",
-      interviewerName: "Sarah Chen",
+      interviewerName: "Barun",
       interviewerRole: "Director of Engineering",
       status: "SCHEDULED",
       createdAt: "2026-09-16T08:00:00.000Z",
@@ -596,7 +599,7 @@ function initializeRecruitmentStore(): RecruitmentStoreState {
       time: "11:30 AM",
       duration: "45 mins",
       meetingLink: "https://meet.google.com/stripe-final-priya",
-      interviewerName: "Sarah Chen",
+      interviewerName: "Barun",
       interviewerRole: "Director of Engineering",
       status: "SCHEDULED",
       createdAt: "2026-09-16T09:00:00.000Z",
@@ -621,7 +624,7 @@ function initializeRecruitmentStore(): RecruitmentStoreState {
       time: "02:00 PM",
       duration: "30 mins",
       meetingLink: "https://meet.google.com/stripe-hr-aman",
-      interviewerName: "Sarah Chen",
+      interviewerName: "Barun",
       interviewerRole: "Director of Engineering",
       status: "SCHEDULED",
       createdAt: "2026-09-16T11:00:00.000Z",
@@ -696,7 +699,7 @@ function initializeRecruitmentStore(): RecruitmentStoreState {
       driveId: drive1Id,
       driveTitle: drive1.title,
       actorId: "recruiter_01",
-      actorName: "Sarah Chen",
+      actorName: "Barun",
       actorRole: "RECRUITER",
       action: "DRIVE_CREATED",
       targetType: "DRIVE",
@@ -712,7 +715,7 @@ function initializeRecruitmentStore(): RecruitmentStoreState {
       driveId: drive1Id,
       driveTitle: drive1.title,
       actorId: "recruiter_01",
-      actorName: "Sarah Chen",
+      actorName: "Barun",
       actorRole: "RECRUITER",
       action: "DRIVE_PUBLISHED",
       targetType: "DRIVE",
@@ -729,7 +732,7 @@ function initializeRecruitmentStore(): RecruitmentStoreState {
       driveId: drive1Id,
       driveTitle: drive1.title,
       actorId: "recruiter_01",
-      actorName: "Sarah Chen",
+      actorName: "Barun",
       actorRole: "RECRUITER",
       action: "CANDIDATE_SHORTLISTED",
       targetType: "APPLICATION",
@@ -746,7 +749,7 @@ function initializeRecruitmentStore(): RecruitmentStoreState {
       driveId: drive1Id,
       driveTitle: drive1.title,
       actorId: "recruiter_01",
-      actorName: "Sarah Chen",
+      actorName: "Barun",
       actorRole: "RECRUITER",
       action: "INTERVIEW_EVALUATION_RECORDED",
       targetType: "EVALUATION",
@@ -947,7 +950,7 @@ function ensureCalendarSeedRecords(store: RecruitmentStoreState) {
       time: "10:00 AM",
       duration: "45 mins",
       meetingLink: "https://meet.google.com/stripe-tech-rahul",
-      interviewerName: "Sarah Chen",
+      interviewerName: "Barun",
       interviewerRole: "Director of Engineering",
       status: "SCHEDULED",
       createdAt: "2026-09-16T08:00:00.000Z",
@@ -972,7 +975,7 @@ function ensureCalendarSeedRecords(store: RecruitmentStoreState) {
       time: "11:30 AM",
       duration: "45 mins",
       meetingLink: "https://meet.google.com/stripe-final-priya",
-      interviewerName: "Sarah Chen",
+      interviewerName: "Barun",
       interviewerRole: "Director of Engineering",
       status: "SCHEDULED",
       createdAt: "2026-09-16T09:00:00.000Z",
@@ -997,7 +1000,7 @@ function ensureCalendarSeedRecords(store: RecruitmentStoreState) {
       time: "02:00 PM",
       duration: "30 mins",
       meetingLink: "https://meet.google.com/stripe-hr-aman",
-      interviewerName: "Sarah Chen",
+      interviewerName: "Barun",
       interviewerRole: "Director of Engineering",
       status: "SCHEDULED",
       createdAt: "2026-09-16T11:00:00.000Z",
@@ -1024,6 +1027,7 @@ function ensureCalendarSeedRecords(store: RecruitmentStoreState) {
 }
 
 ensureCalendarSeedRecords(recruitmentStore);
+ensureApplicationIndexes(recruitmentStore);
 
 if (process.env.NODE_ENV !== "production") {
   globalThis.__COMMANDSKILL_RECRUITMENT_STORE__ = recruitmentStore;
@@ -1094,6 +1098,201 @@ export function saveStagesForDrive(driveId: string, stages: RecruitmentStage[]):
   return stages;
 }
 
+export interface GetApplicationsOptions {
+  driveId?: string;
+  stageId?: string;
+  status?: string;
+  eligibilityStatus?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+  limit?: number;
+  offset?: number;
+  sortBy?: "appliedAt" | "studentName" | "cgpa" | "assessmentScore" | "interviewScore" | "finalScore" | "rank";
+  sortOrder?: "asc" | "desc";
+}
+
+export interface PaginatedApplicationsResult {
+  applications: RecruitmentApplication[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  stageCounts?: Record<string, number>;
+}
+
+export function ensureApplicationIndexes(storeObj?: RecruitmentStoreState): void {
+  const store = storeObj || recruitmentStore;
+  if (!store.driveAppIndex) store.driveAppIndex = new Map();
+  if (!store.driveStageAppIndex) store.driveStageAppIndex = new Map();
+  store.driveAppIndex.clear();
+  store.driveStageAppIndex.clear();
+
+  store.applications.forEach((app) => {
+    if (app.driveId) {
+      let dSet = store.driveAppIndex!.get(app.driveId);
+      if (!dSet) {
+        dSet = new Set();
+        store.driveAppIndex!.set(app.driveId, dSet);
+      }
+      dSet.add(app.id);
+
+      const stageKey = `${app.driveId}:${app.currentStageId || "stage_0"}`;
+      let sSet = store.driveStageAppIndex!.get(stageKey);
+      if (!sSet) {
+        sSet = new Set();
+        store.driveStageAppIndex!.set(stageKey, sSet);
+      }
+      sSet.add(app.id);
+    }
+  });
+}
+
+export function getDriveStageCounts(driveId: string): Record<string, number> {
+  if (!recruitmentStore.driveAppIndex) {
+    ensureApplicationIndexes();
+  }
+  const stages = getStagesForDrive(driveId);
+  const counts: Record<string, number> = {};
+  stages.forEach((s) => {
+    counts[s.id] = 0;
+  });
+
+  const appIds = recruitmentStore.driveAppIndex?.get(driveId);
+  if (appIds) {
+    appIds.forEach((id) => {
+      const app = recruitmentStore.applications.get(id);
+      if (app) {
+        const stageId = app.currentStageId || stages[0]?.id;
+        if (stageId && counts[stageId] !== undefined) {
+          counts[stageId]++;
+        } else if (stageId) {
+          counts[stageId] = (counts[stageId] || 0) + 1;
+        }
+      }
+    });
+  } else {
+    recruitmentStore.applications.forEach((app) => {
+      if (app.driveId === driveId) {
+        const stageId = app.currentStageId || stages[0]?.id;
+        if (stageId && counts[stageId] !== undefined) {
+          counts[stageId]++;
+        } else if (stageId) {
+          counts[stageId] = (counts[stageId] || 0) + 1;
+        }
+      }
+    });
+  }
+  return counts;
+}
+
+export function getPaginatedApplications(options: GetApplicationsOptions = {}): PaginatedApplicationsResult {
+  if (!recruitmentStore.driveAppIndex) {
+    ensureApplicationIndexes();
+  }
+
+  const {
+    driveId,
+    stageId,
+    status,
+    eligibilityStatus,
+    search,
+    sortBy = "appliedAt",
+    sortOrder = "desc",
+  } = options;
+
+  const page = Math.max(1, Number(options.page) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(options.pageSize || options.limit) || 20));
+
+  let candidatePool: RecruitmentApplication[] = [];
+
+  // Optimized index lookup when driveId or stageId is specified
+  if (driveId && driveId !== "all") {
+    if (stageId && stageId !== "all") {
+      const stageKey = `${driveId}:${stageId}`;
+      const ids = recruitmentStore.driveStageAppIndex?.get(stageKey);
+      if (ids && ids.size > 0) {
+        ids.forEach((id) => {
+          const a = recruitmentStore.applications.get(id);
+          if (a) candidatePool.push(a);
+        });
+      } else {
+        candidatePool = Array.from(recruitmentStore.applications.values()).filter(
+          (a) =>
+            a.driveId === driveId &&
+            (a.currentStageId === stageId || (!a.currentStageId && stageId.includes("_1")))
+        );
+      }
+    } else {
+      const ids = recruitmentStore.driveAppIndex?.get(driveId);
+      if (ids && ids.size > 0) {
+        ids.forEach((id) => {
+          const a = recruitmentStore.applications.get(id);
+          if (a) candidatePool.push(a);
+        });
+      } else {
+        candidatePool = Array.from(recruitmentStore.applications.values()).filter(
+          (a) => a.driveId === driveId
+        );
+      }
+    }
+  } else {
+    candidatePool = Array.from(recruitmentStore.applications.values());
+  }
+
+  // Filter criteria
+  if (status && status !== "all") {
+    candidatePool = candidatePool.filter((a) => a.status === status);
+  }
+  if (eligibilityStatus && eligibilityStatus !== "all") {
+    candidatePool = candidatePool.filter((a) => a.eligibility?.status === eligibilityStatus);
+  }
+  if (search && search.trim()) {
+    const q = search.toLowerCase().trim();
+    candidatePool = candidatePool.filter(
+      (a) =>
+        a.studentName.toLowerCase().includes(q) ||
+        a.university.toLowerCase().includes(q) ||
+        a.branch.toLowerCase().includes(q) ||
+        (a.skills && a.skills.some((s) => s.toLowerCase().includes(q)))
+    );
+  }
+
+  // Sorting
+  candidatePool.sort((a, b) => {
+    let comparison = 0;
+    if (sortBy === "studentName") {
+      comparison = a.studentName.localeCompare(b.studentName);
+    } else if (sortBy === "assessmentScore") {
+      comparison = (a.assessmentScore || 0) - (b.assessmentScore || 0);
+    } else if (sortBy === "interviewScore") {
+      comparison = (a.interviewScore || 0) - (b.interviewScore || 0);
+    } else if (sortBy === "finalScore") {
+      comparison = (a.finalScore || 0) - (b.finalScore || 0);
+    } else if (sortBy === "rank") {
+      comparison = (a.rank || 9999) - (b.rank || 9999);
+    } else {
+      comparison = new Date(a.appliedAt).getTime() - new Date(b.appliedAt).getTime();
+    }
+    return sortOrder === "desc" ? -comparison : comparison;
+  });
+
+  const totalCount = candidatePool.length;
+  const totalPages = Math.ceil(totalCount / pageSize) || 1;
+  const offset = options.offset !== undefined ? Number(options.offset) : (page - 1) * pageSize;
+  const paginatedSlice = candidatePool.slice(offset, offset + pageSize);
+  const stageCounts = driveId && driveId !== "all" ? getDriveStageCounts(driveId) : undefined;
+
+  return {
+    applications: paginatedSlice,
+    totalCount,
+    page,
+    pageSize,
+    totalPages,
+    stageCounts,
+  };
+}
+
 export function getApplications(filters?: {
   driveId?: string;
   status?: string;
@@ -1101,34 +1300,11 @@ export function getApplications(filters?: {
   search?: string;
   stageId?: string;
 }): RecruitmentApplication[] {
-  let list = Array.from(recruitmentStore.applications.values());
-
-  if (filters?.driveId && filters.driveId !== "all") {
-    list = list.filter((a) => a.driveId === filters.driveId);
-  }
-  if (filters?.status && filters.status !== "all") {
-    list = list.filter((a) => a.status === filters.status);
-  }
-  if (filters?.eligibilityStatus && filters.eligibilityStatus !== "all") {
-    list = list.filter((a) => a.eligibility?.status === filters.eligibilityStatus);
-  }
-  if (filters?.stageId && filters.stageId !== "all") {
-    list = list.filter((a) => a.currentStageId === filters.stageId);
-  }
-  if (filters?.search && filters.search.trim()) {
-    const q = filters.search.toLowerCase().trim();
-    list = list.filter(
-      (a) =>
-        a.studentName.toLowerCase().includes(q) ||
-        a.university.toLowerCase().includes(q) ||
-        a.branch.toLowerCase().includes(q) ||
-        a.skills.some((s) => s.toLowerCase().includes(q))
-    );
-  }
-
-  return list.sort(
-    (a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime()
-  );
+  return getPaginatedApplications({
+    ...filters,
+    page: 1,
+    pageSize: 10000,
+  }).applications;
 }
 
 export function getApplicationById(id: string): RecruitmentApplication | null {
@@ -1136,9 +1312,237 @@ export function getApplicationById(id: string): RecruitmentApplication | null {
 }
 
 export function saveApplication(app: RecruitmentApplication): RecruitmentApplication {
+  if (app.version === undefined) {
+    app.version = 1;
+  }
   recruitmentStore.applications.set(app.id, app);
+
+  if (!recruitmentStore.driveAppIndex) {
+    ensureApplicationIndexes();
+  } else if (app.driveId) {
+    let dSet = recruitmentStore.driveAppIndex.get(app.driveId);
+    if (!dSet) {
+      dSet = new Set();
+      recruitmentStore.driveAppIndex.set(app.driveId, dSet);
+    }
+    dSet.add(app.id);
+
+    const stageKey = `${app.driveId}:${app.currentStageId || "stage_0"}`;
+    let sSet = recruitmentStore.driveStageAppIndex?.get(stageKey);
+    if (!sSet) {
+      sSet = new Set();
+      recruitmentStore.driveStageAppIndex?.set(stageKey, sSet);
+    }
+    sSet.add(app.id);
+  }
+
   persistRecruitmentStoreToDisk();
   return app;
+}
+
+export interface StageTransitionResult {
+  success: boolean;
+  application?: RecruitmentApplication;
+  error?: string;
+  errorCode?: "NOT_FOUND" | "CONFLICT" | "INVALID_TRANSITION" | "PREREQUISITE_FAILED" | "UNAUTHORIZED";
+}
+
+export function updateApplicationStatusAtomic(
+  id: string,
+  newStatus: RecruitmentApplication["status"],
+  options?: {
+    actorId?: string;
+    actorName?: string;
+    notes?: string;
+    nextStageId?: string;
+    expectedVersion?: number;
+    idempotencyKey?: string;
+    enforceRules?: boolean;
+    isOverride?: boolean;
+    overrideReason?: string;
+  }
+): StageTransitionResult {
+  const app = recruitmentStore.applications.get(id);
+  if (!app) {
+    return {
+      success: false,
+      errorCode: "NOT_FOUND",
+      error: `Application ${id} not found.`,
+    };
+  }
+
+  // 1. Idempotency Check: if request was already executed with this key, return without duplicate audit/history
+  if (options?.idempotencyKey && app.lastIdempotencyKey === options.idempotencyKey) {
+    return {
+      success: true,
+      application: app,
+    };
+  }
+
+  // 2. Optimistic Concurrency Control (OCC)
+  if (
+    options?.expectedVersion !== undefined &&
+    app.version !== undefined &&
+    app.version !== options.expectedVersion
+  ) {
+    return {
+      success: false,
+      errorCode: "CONFLICT",
+      error: "Application was modified by another reviewer. Please refresh to load latest data before making changes.",
+    };
+  }
+
+  const previousStatus = app.status;
+  const previousStageId = app.currentStageId;
+  const previousStageName = app.currentStageName;
+  const driveStages = getStagesForDrive(app.driveId);
+  const currentStage = driveStages.find((s) => s.id === app.currentStageId) || driveStages[0];
+
+  // 3. Stage Transition Validation Rules (if transitioning to another stage)
+  if (options?.nextStageId && options.nextStageId !== app.currentStageId) {
+    const targetStage = driveStages.find((s) => s.id === options.nextStageId);
+    if (!targetStage) {
+      return {
+        success: false,
+        errorCode: "INVALID_TRANSITION",
+        error: `Target stage '${options.nextStageId}' does not belong to recruitment drive '${app.driveId}'.`,
+      };
+    }
+
+    const enforce = options.enforceRules !== false && !options.isOverride;
+
+    if (enforce) {
+      // Rule 1: Moving to Stage 2 (Technical Assessment)
+      if (targetStage.type === "ASSESSMENT" || targetStage.order === 2) {
+        const isEligible = app.eligibility?.status === "ELIGIBLE" || !!app.manualOverride;
+        if (!isEligible) {
+          return {
+            success: false,
+            errorCode: "PREREQUISITE_FAILED",
+            error: `Candidate ${app.studentName} did not satisfy mandatory eligibility screening (${app.eligibility?.status || "INCOMPLETE"}) and cannot be advanced to Technical Assessment without an approved override.`,
+          };
+        }
+      }
+
+      // Rule 2: Moving to Stage 3 (Engineering & System Interview)
+      if (targetStage.type === "INTERVIEW" || targetStage.order === 3) {
+        const driveAssessments = recruitmentStore.assessments.get(app.driveId) || [];
+        const candAssessment = driveAssessments.find((a) => a.applicationId === app.id);
+        const assessmentScore = app.assessmentScore ?? candAssessment?.candidateScore;
+        const passingBenchmark = currentStage?.passingScore || 75;
+
+        if (assessmentScore === undefined || assessmentScore === null) {
+          return {
+            success: false,
+            errorCode: "PREREQUISITE_FAILED",
+            error: `Candidate ${app.studentName} has not completed the Technical Assessment. Test marks must be recorded before advancing to Interview round.`,
+          };
+        }
+
+        if (assessmentScore < passingBenchmark) {
+          return {
+            success: false,
+            errorCode: "PREREQUISITE_FAILED",
+            error: `Candidate ${app.studentName} scored ${assessmentScore}/100, which is below the required passing benchmark (${passingBenchmark}/100) for ${currentStage.name}.`,
+          };
+        }
+      }
+
+      // Rule 3: Moving to Stage 4 (Final Merit Selection & Offer)
+      if (targetStage.type === "FINAL_SELECTION" || targetStage.order === 4) {
+        const driveInterviews = recruitmentStore.interviews.get(app.driveId) || [];
+        const candInterview = driveInterviews.find((i) => i.applicationId === app.id);
+        const interviewScore = app.interviewScore ?? candInterview?.evaluation?.overallScore;
+        const recommendation = candInterview?.evaluation?.recommendation;
+
+        if (!interviewScore || !recommendation) {
+          return {
+            success: false,
+            errorCode: "PREREQUISITE_FAILED",
+            error: `Candidate ${app.studentName} has no completed interview evaluation. Interview scores and recommendation must be logged before final selection.`,
+          };
+        }
+
+        if (recommendation === "NOT_RECOMMEND") {
+          return {
+            success: false,
+            errorCode: "PREREQUISITE_FAILED",
+            error: `Candidate ${app.studentName} received a 'NOT_RECOMMEND' recommendation from the interview panel and cannot advance to Final Selection.`,
+          };
+        }
+      }
+    }
+
+    // Update Stage
+    app.currentStageId = targetStage.id;
+    app.currentStageName = targetStage.name;
+    app.currentStageType = targetStage.type;
+  }
+
+  // 4. Update Application State & Version
+  app.status = newStatus;
+  app.version = (app.version || 1) + 1;
+  app.lastIdempotencyKey = options?.idempotencyKey;
+  app.updatedAt = new Date().toISOString();
+  if (options?.notes) app.notes = options.notes;
+
+  if (options?.isOverride && options.overrideReason) {
+    app.manualOverride = {
+      overriddenBy: options.actorName || "Recruiter",
+      previousStatus,
+      newStatus,
+      reason: options.overrideReason,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  // 5. Append History Entry (De-duplicated)
+  if (!app.history) app.history = [];
+  app.history.push({
+    stageId: app.currentStageId,
+    stageName: app.currentStageName,
+    status: newStatus,
+    timestamp: new Date().toISOString(),
+    actor: options?.actorName || "Recruiter",
+    note: options?.notes || (options?.isOverride ? `Manual Override: ${options.overrideReason}` : undefined),
+  });
+
+  // 6. Update Stage Indexes
+  if (previousStageId !== app.currentStageId) {
+    const oldKey = `${app.driveId}:${previousStageId}`;
+    const newKey = `${app.driveId}:${app.currentStageId}`;
+    recruitmentStore.driveStageAppIndex?.get(oldKey)?.delete(app.id);
+    let newSet = recruitmentStore.driveStageAppIndex?.get(newKey);
+    if (!newSet) {
+      newSet = new Set();
+      recruitmentStore.driveStageAppIndex?.set(newKey, newSet);
+    }
+    newSet.add(app.id);
+  }
+
+  // 7. Write Structured Audit Log Entry
+  logRecruiterAction({
+    driveId: app.driveId,
+    driveTitle: app.driveTitle,
+    actorId: options?.actorId || "recruiter_01",
+    actorName: options?.actorName || "Recruiter",
+    actorRole: "RECRUITER",
+    action: `STATUS_CHANGED_${newStatus}`,
+    targetType: "APPLICATION",
+    targetId: app.id,
+    targetName: app.studentName,
+    previousState: previousStatus,
+    newState: newStatus,
+    details: `Updated application from ${previousStatus} (Stage: ${previousStageName}) to ${newStatus} (Stage: ${app.currentStageName}). Notes: ${options?.notes || "N/A"}`,
+  });
+
+  // 8. Persist
+  persistRecruitmentStoreToDisk();
+
+  return {
+    success: true,
+    application: app,
+  };
 }
 
 export function updateApplicationStatus(
@@ -1148,52 +1552,12 @@ export function updateApplicationStatus(
   notes?: string,
   nextStageId?: string
 ): RecruitmentApplication | null {
-  const app = recruitmentStore.applications.get(id);
-  if (!app) return null;
-
-  const previousStatus = app.status;
-  app.status = newStatus;
-  app.updatedAt = new Date().toISOString();
-  if (notes) app.notes = notes;
-
-  if (nextStageId) {
-    const driveStages = getStagesForDrive(app.driveId);
-    const stage = driveStages.find((s) => s.id === nextStageId);
-    if (stage) {
-      app.currentStageId = stage.id;
-      app.currentStageName = stage.name;
-      app.currentStageType = stage.type;
-    }
-  }
-
-  if (!app.history) app.history = [];
-  app.history.push({
-    stageId: app.currentStageId,
-    stageName: app.currentStageName,
-    status: newStatus,
-    timestamp: new Date().toISOString(),
-    actor: actorName,
-    note: notes,
-  });
-
-  // Log to Audit Trail
-  logRecruiterAction({
-    driveId: app.driveId,
-    driveTitle: app.driveTitle,
-    actorId: "recruiter_01",
+  const result = updateApplicationStatusAtomic(id, newStatus, {
     actorName,
-    actorRole: "RECRUITER",
-    action: `STATUS_CHANGED_${newStatus}`,
-    targetType: "APPLICATION",
-    targetId: app.id,
-    targetName: app.studentName,
-    previousState: previousStatus,
-    newState: newStatus,
-    details: `Updated application status from ${previousStatus} to ${newStatus}.${notes ? ` Note: ${notes}` : ""}`,
+    notes,
+    nextStageId,
   });
-
-  persistRecruitmentStoreToDisk();
-  return app;
+  return result.application || null;
 }
 
 export function recordManualEligibilityOverride(
@@ -1315,7 +1679,7 @@ export function saveInterviewRecord(record: CandidateInterviewRecord): Candidate
   logRecruiterAction({
     driveId: record.driveId,
     actorId: "recruiter_01",
-    actorName: "Sarah Chen",
+    actorName: "Barun",
     actorRole: "RECRUITER",
     action: "INTERVIEW_SCHEDULED",
     targetType: "INTERVIEW",

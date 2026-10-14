@@ -61,6 +61,7 @@ interface StoreState {
   studentProfiles: Map<string, StudentProfile>;
   recruiterProfiles: Map<string, RecruiterProfile>;
   adminProfiles: Map<string, AdminProfile>;
+  collegeProfiles: Map<string, CollegeProfile>;
   companies: Map<string, CompanyRecord>;
   moderationReports: Map<string, ModerationReport>;
   auditLogs: AuditLogEntry[];
@@ -84,6 +85,15 @@ interface StoreState {
   documentAttempts: Map<string, DocumentVerificationAttempt[]>; // documentId -> DocumentVerificationAttempt[]
   documentBuffers: Map<string, Buffer>; // documentId -> Buffer
   verificationCounter: number;
+  userCredentials: Map<string, UserCredentialRecord>; // email -> UserCredentialRecord
+}
+
+export interface UserCredentialRecord {
+  userId: string;
+  email: string;
+  passwordHash: string;
+  role: UserRole;
+  createdAt: string;
 }
 
 export interface GitHubConnectionRecord {
@@ -140,6 +150,12 @@ function initializeStore(): StoreState {
   // Initialize default admin
   adminProfiles.set(defaultAdminUser.id, {
     ...defaultAdminUser,
+  });
+
+  // Initialize default college
+  const collegeProfiles = new Map<string, CollegeProfile>();
+  collegeProfiles.set(defaultCollegeUser.id, {
+    ...defaultCollegeUser,
   });
 
   // Clone initial verification requests
@@ -360,8 +376,8 @@ function initializeStore(): StoreState {
     {
       id: "rep_002",
       reporterId: "recruiter_01",
-      reporterName: "Sarah Chen",
-      reporterEmail: "sarah.chen@techcorp.io",
+      reporterName: "Barun",
+      reporterEmail: "barun@techcorp.io",
       targetType: "USER",
       targetId: "student_spam_99",
       targetTitle: "Candidate #9901 (Duplicate Identity)",
@@ -1349,6 +1365,7 @@ function initializeStore(): StoreState {
     studentProfiles,
     recruiterProfiles,
     adminProfiles,
+    collegeProfiles,
     companies,
     moderationReports,
     auditLogs: JSON.parse(JSON.stringify(initialAuditLogs)),
@@ -1372,6 +1389,7 @@ function initializeStore(): StoreState {
     documentAttempts: initialDocumentAttempts,
     documentBuffers: new Map<string, Buffer>(),
     verificationCounter: 4814,
+    userCredentials: new Map<string, UserCredentialRecord>(),
   };
 
   loadStoreFromDisk(initialStore);
@@ -1523,6 +1541,10 @@ export function persistStoreToDisk(): void {
 const store: StoreState = global.__COMMANDSKILL_SERVER_STORE__ || (global.__COMMANDSKILL_SERVER_STORE__ = initializeStore());
 
 export function ensureCollegeStore(): void {
+  if (!store.collegeProfiles || store.collegeProfiles.size === 0) {
+    if (!store.collegeProfiles) store.collegeProfiles = new Map();
+    store.collegeProfiles.set(defaultCollegeUser.id, { ...defaultCollegeUser });
+  }
   if (!store.colleges || store.colleges.size === 0 || !store.collegeParticipation) {
     const fresh = initializeStore();
     if (!store.colleges || store.colleges.size === 0) {
@@ -1534,13 +1556,81 @@ export function ensureCollegeStore(): void {
   }
 }
 
+export function ensureCredentialsStore(): void {
+  if (!store.userCredentials || store.userCredentials.size === 0) {
+    if (!store.userCredentials) store.userCredentials = new Map();
+
+    store.userCredentials.set("alex.rivera@stanford.edu", {
+      userId: "student_01",
+      email: "alex.rivera@stanford.edu",
+      passwordHash: "commandskill123",
+      role: "STUDENT",
+      createdAt: new Date().toISOString(),
+    });
+    store.userCredentials.set("alex.rivera@university.edu", {
+      userId: "student_01",
+      email: "alex.rivera@university.edu",
+      passwordHash: "commandskill123",
+      role: "STUDENT",
+      createdAt: new Date().toISOString(),
+    });
+    store.userCredentials.set("barun@stripe-careers.com", {
+      userId: "recruiter_01",
+      email: "barun@stripe-careers.com",
+      passwordHash: "recruiter123",
+      role: "RECRUITER",
+      createdAt: new Date().toISOString(),
+    });
+    store.userCredentials.set("sarah.chen@stripe-careers.com", {
+      userId: "recruiter_01",
+      email: "sarah.chen@stripe-careers.com",
+      passwordHash: "recruiter123",
+      role: "RECRUITER",
+      createdAt: new Date().toISOString(),
+    });
+    store.userCredentials.set("placement@stanford.edu", {
+      userId: "college_01",
+      email: "placement@stanford.edu",
+      passwordHash: "college123",
+      role: "COLLEGE_ADMIN",
+      createdAt: new Date().toISOString(),
+    });
+    store.userCredentials.set("priya.menon@commandskill.io", {
+      userId: "admin_01",
+      email: "priya.menon@commandskill.io",
+      passwordHash: "admin123",
+      role: "PLATFORM_ADMIN",
+      createdAt: new Date().toISOString(),
+    });
+    store.userCredentials.set("admin@commandskill.io", {
+      userId: "admin_01",
+      email: "admin@commandskill.io",
+      passwordHash: "admin123",
+      role: "PLATFORM_ADMIN",
+      createdAt: new Date().toISOString(),
+    });
+
+    const envAdminEmail = (process.env.ADMIN_EMAIL || "akash002007@gmail.com").trim().toLowerCase();
+    const envAdminPassword = (process.env.ADMIN_PASSWORD || "1234567890").trim();
+    store.userCredentials.set(envAdminEmail, {
+      userId: "admin_01",
+      email: envAdminEmail,
+      passwordHash: envAdminPassword,
+      role: "PLATFORM_ADMIN",
+      createdAt: new Date().toISOString(),
+    });
+  }
+}
+
 ensureCollegeStore();
+ensureCredentialsStore();
 
 export class ServerStore {
   static getUserById(userId: string): any {
     return (
       store.studentProfiles.get(userId) ||
       store.recruiterProfiles.get(userId) ||
+      (store.collegeProfiles && store.collegeProfiles.get(userId)) ||
       store.adminProfiles.get(userId) ||
       null
     );
@@ -3424,11 +3514,20 @@ export class ServerStore {
       const student = students[i];
       if (student.email.trim().toLowerCase() === normalized) return student;
       if (student.personalEmail && student.personalEmail.trim().toLowerCase() === normalized) return student;
+      if (student.id === "student_01" && (normalized === "alex.rivera@stanford.edu" || normalized === "alex.rivera@university.edu")) return student;
     }
     // Check recruiters
     const recruiters = Array.from(store.recruiterProfiles.values());
     for (let i = 0; i < recruiters.length; i++) {
       if (recruiters[i].email.trim().toLowerCase() === normalized) return recruiters[i];
+      if (recruiters[i].id === "recruiter_01" && (normalized === "barun@stripe-careers.com" || normalized === "sarah.chen@stripe-careers.com")) return recruiters[i];
+    }
+    // Check college profiles
+    if (store.collegeProfiles) {
+      const colleges = Array.from(store.collegeProfiles.values());
+      for (let i = 0; i < colleges.length; i++) {
+        if (colleges[i].email.trim().toLowerCase() === normalized) return colleges[i];
+      }
     }
     // Check admins
     const admins = Array.from(store.adminProfiles.values());
@@ -3436,6 +3535,386 @@ export class ServerStore {
       if (admins[i].email.trim().toLowerCase() === normalized) return admins[i];
     }
     return null;
+  }
+
+  static getDemoUser(roleKey: string): { user: User; role: UserRole; redirectUrl: string } | null {
+    const norm = (roleKey || "").trim().toLowerCase();
+    ensureCollegeStore();
+
+    if (norm === "student") {
+      let student = store.studentProfiles.get("student_01");
+      if (!student) {
+        student = {
+          ...defaultStudentUser,
+          id: "student_01",
+          email: "alex.rivera@stanford.edu",
+          role: "STUDENT",
+          collegeId: "col_stanford",
+          verificationStatus: "approved",
+          onboardingCompleted: true,
+          accountStatus: "onboarding_complete",
+        };
+      } else {
+        student.verificationStatus = "approved";
+        student.onboardingCompleted = true;
+        student.accountStatus = "onboarding_complete";
+        student.role = "STUDENT";
+        student.email = "alex.rivera@stanford.edu";
+      }
+      store.studentProfiles.set("student_01", student);
+      return {
+        user: { ...student, role: "STUDENT" },
+        role: "STUDENT",
+        redirectUrl: "/dashboard",
+      };
+    }
+
+    if (norm === "recruiter" || norm === "company_admin") {
+      let recruiter = store.recruiterProfiles.get("recruiter_01");
+      if (!recruiter) {
+        recruiter = {
+          ...defaultRecruiterUser,
+          id: "recruiter_01",
+          email: "barun@stripe-careers.com",
+          role: "RECRUITER",
+          company: "Stripe",
+        };
+      } else {
+        recruiter.role = "RECRUITER";
+        recruiter.email = "barun@stripe-careers.com";
+      }
+      store.recruiterProfiles.set("recruiter_01", recruiter);
+      return {
+        user: { ...recruiter, role: "RECRUITER" },
+        role: "RECRUITER",
+        redirectUrl: "/dashboard/recruiter",
+      };
+    }
+
+    if (
+      norm === "college_admin" ||
+      norm === "college" ||
+      norm === "college_dean" ||
+      norm === "placement_officer" ||
+      norm === "college_placement_officer" ||
+      norm === "dean"
+    ) {
+      if (!store.collegeProfiles) {
+        store.collegeProfiles = new Map();
+      }
+      let college = store.collegeProfiles.get("college_01");
+      if (!college) {
+        college = {
+          ...defaultCollegeUser,
+          id: "college_01",
+          email: "placement@stanford.edu",
+          role: "COLLEGE_ADMIN",
+          collegeId: "col_stanford",
+        };
+      } else {
+        college.role = "COLLEGE_ADMIN";
+        college.email = "placement@stanford.edu";
+      }
+      store.collegeProfiles.set("college_01", college);
+      return {
+        user: { ...college, role: "COLLEGE_ADMIN" },
+        role: "COLLEGE_ADMIN",
+        redirectUrl: "/college/dashboard",
+      };
+    }
+
+    if (
+      norm === "admin" ||
+      norm === "platform_admin" ||
+      norm === "super_admin" ||
+      norm === "verification_officer"
+    ) {
+      let admin = store.adminProfiles.get("admin_01");
+      if (!admin) {
+        admin = {
+          ...defaultAdminUser,
+          id: "admin_01",
+          email: "priya.menon@commandskill.io",
+          role: "PLATFORM_ADMIN",
+        };
+      } else {
+        admin.role = "PLATFORM_ADMIN";
+        admin.email = "priya.menon@commandskill.io";
+      }
+      store.adminProfiles.set("admin_01", admin);
+      return {
+        user: { ...admin, role: "PLATFORM_ADMIN" },
+        role: "PLATFORM_ADMIN",
+        redirectUrl: "/admin",
+      };
+    }
+
+    return null;
+  }
+
+  static authenticateWithPassword(
+    email: string,
+    password: string,
+    requestedRole?: string
+  ): { user: User; role: UserRole; redirectUrl: string } | { error: string; status: number } {
+    ensureCollegeStore();
+    ensureCredentialsStore();
+
+    const normEmail = (email || "").trim().toLowerCase();
+    const cleanPassword = (password || "").trim();
+
+    if (!normEmail || !cleanPassword) {
+      return { error: "Email and password are required.", status: 400 };
+    }
+
+    const cred = store.userCredentials.get(normEmail);
+    if (!cred || cred.passwordHash !== cleanPassword) {
+      return { error: "Invalid email or password. Please verify your credentials and try again.", status: 401 };
+    }
+
+    let userProfile: User | null = null;
+    let canonicalRole: UserRole = cred.role;
+
+    if (cred.role === "STUDENT" || cred.role === "student") {
+      let student = store.studentProfiles.get(cred.userId);
+      if (!student) {
+        student = {
+          ...defaultStudentUser,
+          id: cred.userId,
+          email: cred.email,
+          role: "STUDENT",
+          verificationStatus: isUniversityEmail(cred.email) ? "approved" : "not_submitted",
+          onboardingCompleted: isUniversityEmail(cred.email),
+          accountStatus: isUniversityEmail(cred.email) ? "onboarding_complete" : "account_created",
+        };
+        store.studentProfiles.set(cred.userId, student);
+      }
+      userProfile = { ...student, role: "STUDENT" };
+      canonicalRole = "STUDENT";
+    } else if (cred.role === "RECRUITER" || cred.role === "recruiter") {
+      let recruiter = store.recruiterProfiles.get(cred.userId);
+      if (!recruiter) {
+        recruiter = {
+          ...defaultRecruiterUser,
+          id: cred.userId,
+          email: cred.email,
+          role: "RECRUITER",
+        };
+        store.recruiterProfiles.set(cred.userId, recruiter);
+      }
+      userProfile = { ...recruiter, role: "RECRUITER" };
+      canonicalRole = "RECRUITER";
+    } else if (cred.role === "COLLEGE_ADMIN" || cred.role === "COLLEGE_PLACEMENT_OFFICER") {
+      let college = store.collegeProfiles?.get(cred.userId);
+      if (!college) {
+        college = {
+          ...defaultCollegeUser,
+          id: cred.userId,
+          email: cred.email,
+          role: "COLLEGE_ADMIN",
+        };
+        store.collegeProfiles?.set(cred.userId, college);
+      }
+      userProfile = { ...college, role: "COLLEGE_ADMIN" };
+      canonicalRole = "COLLEGE_ADMIN";
+    } else {
+      let admin = store.adminProfiles.get(cred.userId);
+      if (!admin) {
+        admin = {
+          ...defaultAdminUser,
+          id: cred.userId,
+          email: cred.email,
+          role: "PLATFORM_ADMIN",
+        };
+        store.adminProfiles.set(cred.userId, admin);
+      }
+      userProfile = { ...admin, role: "PLATFORM_ADMIN" };
+      canonicalRole = "PLATFORM_ADMIN";
+    }
+
+    const roleStr = String(canonicalRole);
+    const redirectUrl =
+      roleStr === "PLATFORM_ADMIN" || roleStr === "SUPER_ADMIN"
+        ? "/admin"
+        : roleStr === "COLLEGE_ADMIN" || roleStr === "COLLEGE_PLACEMENT_OFFICER"
+        ? "/college/dashboard"
+        : roleStr === "RECRUITER" || roleStr === "COMPANY_ADMIN"
+        ? "/dashboard/recruiter"
+        : (userProfile as StudentProfile).verificationStatus === "not_submitted"
+        ? "/onboarding?step=verification"
+        : "/dashboard";
+
+    return { user: userProfile, role: canonicalRole, redirectUrl };
+  }
+
+  static registerUser(data: {
+    role: "student" | "recruiter" | "STUDENT" | "RECRUITER";
+    name: string;
+    email: string;
+    password: string;
+    university?: string;
+    phone?: string;
+    companyName?: string;
+    companyWebsite?: string;
+    companyLocation?: string;
+    companySize?: string;
+    companyType?: string;
+    jobTitle?: string;
+    department?: string;
+    recruiterRole?: string;
+    recruiterUsage?: string[];
+  }): { user: User; role: UserRole; redirectUrl: string } | { error: string; status: number } {
+    ensureCollegeStore();
+    ensureCredentialsStore();
+
+    const normEmail = (data.email || "").trim().toLowerCase();
+    const cleanPassword = (data.password || "").trim();
+    const cleanName = (data.name || "").trim();
+
+    if (!normEmail || !normEmail.includes("@")) {
+      return { error: "A valid email address is required.", status: 400 };
+    }
+    if (!cleanPassword || cleanPassword.length < 6) {
+      return { error: "Password must be at least 6 characters.", status: 400 };
+    }
+    if (!cleanName) {
+      return { error: "Full name is required.", status: 400 };
+    }
+
+    // Check for duplicate account
+    if (store.userCredentials.has(normEmail) || ServerStore.findUserByEmail(normEmail)) {
+      return { error: "An account with this email address already exists. Please sign in.", status: 409 };
+    }
+
+    const isRecruiter = (data.role || "").toLowerCase() === "recruiter";
+
+    if (isRecruiter) {
+      const recruiterId = `recruiter_${Date.now()}`;
+      const newRecruiter: RecruiterProfile = {
+        id: recruiterId,
+        name: cleanName,
+        email: normEmail,
+        phone: data.phone?.trim() || "",
+        role: "recruiter",
+        avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80",
+        title: data.jobTitle?.trim() || "University Talent Partner",
+        department: data.department?.trim() || "University Talent & Early Career",
+        company: data.companyName?.trim() || "Enterprise Partner",
+        companyLogo: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=80&auto=format&fit=crop&q=80",
+        companyWebsite: data.companyWebsite?.trim() || "",
+        companyLocation: data.companyLocation?.trim() || "San Francisco, CA",
+        companySize: data.companySize || "500 - 1,000 employees",
+        companyType: data.companyType || "Technology & Software",
+        recruiterRole: data.recruiterRole || "Talent Acquisition",
+        recruiterUsage: data.recruiterUsage || ["Hire interns", "Discover student talent"],
+        location: data.companyLocation?.trim() || "San Francisco, CA",
+        bio: `Hiring ambitious college students and university talent at ${data.companyName?.trim() || "our company"}.`,
+        verificationStatus: "Recruiter Verified",
+        activeListingsCount: 0,
+        candidatesReviewed: 0,
+        interviewsConducted: 0,
+      };
+
+      store.recruiterProfiles.set(recruiterId, newRecruiter);
+      store.userCredentials.set(normEmail, {
+        userId: recruiterId,
+        email: normEmail,
+        passwordHash: cleanPassword,
+        role: "RECRUITER",
+        createdAt: new Date().toISOString(),
+      });
+
+      return {
+        user: { ...newRecruiter, role: "RECRUITER" },
+        role: "RECRUITER",
+        redirectUrl: "/dashboard/recruiter",
+      };
+    } else {
+      const studentId = `student_${Date.now()}`;
+      const isUni = isUniversityEmail(normEmail);
+      const uniName = (data.university || "").trim() || "University";
+
+      const newStudent: StudentProfile = {
+        id: studentId,
+        name: cleanName,
+        email: normEmail,
+        role: "student",
+        avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+        headline: `Student @ ${uniName}`,
+        university: uniName,
+        degree: "Undergraduate",
+        branch: "General",
+        academicStream: "Engineering & Technology",
+        specialization: "",
+        academicLevel: "Undergraduate",
+        yearOfStudy: "1st Year",
+        graduationYear: new Date().getFullYear() + 4,
+        cgpa: "",
+        location: "Campus / Remote",
+        bio: "",
+        phone: "",
+        hasUniversityEmail: isUni,
+        isUniversityEmail: isUni,
+        personalEmail: "",
+        status: "Looking for Part-time",
+        skills: [],
+        resume: null,
+        projects: [],
+        certifications: [],
+        socialLinks: {},
+        stats: {
+          profileViews: 1,
+          searchAppearances: 0,
+          applicationsCount: 0,
+          interviewsCount: 0,
+        },
+        accountStatus: isUni ? "onboarding_complete" : "account_created",
+        verificationStatus: isUni ? "approved" : "not_submitted",
+        onboardingCompleted: isUni,
+      };
+
+      store.studentProfiles.set(studentId, newStudent);
+      store.userCredentials.set(normEmail, {
+        userId: studentId,
+        email: normEmail,
+        passwordHash: cleanPassword,
+        role: "STUDENT",
+        createdAt: new Date().toISOString(),
+      });
+
+      return {
+        user: { ...newStudent, role: "STUDENT" },
+        role: "STUDENT",
+        redirectUrl: isUni ? "/dashboard" : "/onboarding?step=verification",
+      };
+    }
+  }
+
+  static resetPassword(email: string, newPassword?: string): { success: boolean; message: string } | { error: string; status: number } {
+    ensureCredentialsStore();
+    const normEmail = (email || "").trim().toLowerCase();
+    if (!normEmail) {
+      return { error: "Email is required.", status: 400 };
+    }
+
+    const cred = store.userCredentials.get(normEmail);
+    if (!cred) {
+      const user = ServerStore.findUserByEmail(normEmail);
+      if (!user) {
+        return { error: "No account found with this email address.", status: 404 };
+      }
+      store.userCredentials.set(normEmail, {
+        userId: user.id,
+        email: normEmail,
+        passwordHash: newPassword?.trim() || "commandskill123",
+        role: (user.role || "STUDENT").toUpperCase() as UserRole,
+        createdAt: new Date().toISOString(),
+      });
+      return { success: true, message: `Password reset instructions sent to ${normEmail}.` };
+    }
+
+    cred.passwordHash = newPassword?.trim() || "commandskill123";
+    return { success: true, message: `Password reset instructions sent to ${normEmail}.` };
   }
 
   static handleGoogleAuth(params: {

@@ -546,21 +546,30 @@ export function CommandSkillSidebar({
 
   const handleLogout = () => {
     logout();
-    router.push("/login");
+    window.location.href = "/login";
   };
 
-  const handleRoleSwitch = () => {
+  const handleRoleSwitch = async () => {
     let nextRole: UserRole = "STUDENT";
     if (isStudentWorkspace) nextRole = "RECRUITER";
     else if (isRecruiterWorkspace) nextRole = "COLLEGE_ADMIN";
     else if (isCollegeWorkspace) nextRole = "PLATFORM_ADMIN";
     else nextRole = "STUDENT";
 
-    switchRole(nextRole);
-    if (nextRole === "PLATFORM_ADMIN") router.push("/admin");
-    else if (nextRole === "COLLEGE_ADMIN") router.push("/college/dashboard");
-    else if (nextRole === "RECRUITER") router.push("/dashboard/recruiter");
-    else router.push("/dashboard");
+    const res = await switchRole(nextRole);
+    if (res?.redirectUrl) {
+      window.location.href = res.redirectUrl;
+    } else {
+      const fallback =
+        nextRole === "PLATFORM_ADMIN"
+          ? "/admin"
+          : nextRole === "COLLEGE_ADMIN"
+          ? "/college/dashboard"
+          : nextRole === "RECRUITER"
+          ? "/dashboard/recruiter"
+          : "/dashboard";
+      window.location.href = fallback;
+    }
   };
 
   const isLinkActive = (href: string) => {

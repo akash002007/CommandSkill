@@ -223,7 +223,7 @@ export default function RecruiterOnboardingPage() {
               <div className="space-y-1.5 text-xs text-muted-foreground">
                 <div className="flex justify-between">
                   <span>Contact:</span>
-                  <span className="font-medium text-foreground">{recruiter?.name || "Sarah Chen"}</span>
+                  <span className="font-medium text-foreground">{recruiter?.name || "Barun"}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Job Title:</span>
@@ -239,7 +239,7 @@ export default function RecruiterOnboardingPage() {
                 </div>
                 <div className="flex justify-between">
                   <span>Work Email:</span>
-                  <span className="font-medium text-foreground">{recruiter?.email || "sarah@stripe.com"}</span>
+                  <span className="font-medium text-foreground">{recruiter?.email || "barun@stripe.com"}</span>
                 </div>
               </div>
             </div>

@@ -17,6 +17,8 @@ export interface CommandSkillTokenPayload extends JWTPayload {
   email: string;
   role: UserRole;
   name: string;
+  company_id?: string;
+  college_id?: string;
   googleId?: string;
   authProvider?: "credentials" | "google";
   tokenType?: "access" | "refresh";

@@ -134,8 +134,8 @@ export const defaultStudentUser: StudentProfile = {
 
 export const defaultRecruiterUser: RecruiterProfile = {
   id: "recruiter_01",
-  name: "Sarah Chen",
-  email: "sarah.chen@stripe-careers.com",
+  name: "Barun",
+  email: "barun@stripe-careers.com",
   phone: "+1 (415) 890-2134",
   role: "recruiter",
   avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80",

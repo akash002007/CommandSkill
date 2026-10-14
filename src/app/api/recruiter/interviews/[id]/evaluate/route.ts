@@ -40,7 +40,7 @@ export async function POST(
       feedback: feedback?.trim() || "Candidate performed well across all evaluation metrics.",
       recommendation: recommendation || "RECOMMEND",
       evaluatedAt: new Date().toISOString(),
-      evaluatorName: auth.recruiter.name || "Sarah Chen",
+      evaluatorName: auth.recruiter.name || "Barun",
     });
 
     if (!updatedInterview) {

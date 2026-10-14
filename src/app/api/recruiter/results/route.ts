@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const publisherName = auth.recruiter.name || "Sarah Chen";
+    const publisherName = auth.recruiter.name || "Barun";
     const publishedResult = publishRecruitmentResults(driveId, publisherName, finalRoster);
 
     if (!publishedResult) {

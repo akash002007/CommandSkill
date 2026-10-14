@@ -150,24 +150,37 @@ export async function getAuthenticatedUser(
         // Outside Next.js request context (scripts/tests)
       }
 
+      let tokenCookie: string | undefined;
       if (cookieStore) {
-        const tokenCookie =
+        tokenCookie =
           cookieStore.get("commandskill_access_token")?.value ||
           cookieStore.get("sb-access-token")?.value;
-          
-        if (tokenCookie) {
-          const jwtPayload = await verifyAccessToken(tokenCookie);
-          if (jwtPayload && jwtPayload.userId) {
-            userRole = (jwtPayload.role || "").toUpperCase();
-            authenticatedUser = {
-              id: jwtPayload.userId,
-              email: jwtPayload.email || "",
-              role: userRole,
-              name: (jwtPayload.name as string) || "",
-              company_id: jwtPayload.company_id as string | undefined,
-              college_id: jwtPayload.college_id as string | undefined,
-            };
-          }
+      }
+      if (!tokenCookie && (request as any)?.cookies?.get) {
+        tokenCookie =
+          (request as any).cookies.get("commandskill_access_token")?.value ||
+          (request as any).cookies.get("sb-access-token")?.value;
+      }
+      if (!tokenCookie && request.headers) {
+        const rawCookie = request.headers.get("cookie") || "";
+        const match = rawCookie.match(/(?:commandskill_access_token|sb-access-token)=([^;]+)/);
+        if (match) {
+          tokenCookie = decodeURIComponent(match[1].trim());
+        }
+      }
+
+      if (tokenCookie) {
+        const jwtPayload = await verifyAccessToken(tokenCookie);
+        if (jwtPayload && jwtPayload.userId) {
+          userRole = (jwtPayload.role || "").toUpperCase();
+          authenticatedUser = {
+            id: jwtPayload.userId,
+            email: jwtPayload.email || "",
+            role: userRole,
+            name: (jwtPayload.name as string) || "",
+            company_id: jwtPayload.company_id as string | undefined,
+            college_id: jwtPayload.college_id as string | undefined,
+          };
         }
       }
     }
@@ -228,6 +241,7 @@ export async function getAuthenticatedUser(
           email: defaultRecruiterUser.email || "recruiter@example.com",
           role: "RECRUITER",
           name: defaultRecruiterUser.name || "Mock Recruiter",
+          company_id: "comp_stripe",
         };
       } else {
         userRole = "STUDENT";

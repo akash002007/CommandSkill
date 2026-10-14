@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
       passingScore: passing,
       candidateScore: score,
       passed: isPassed,
-      evaluatedBy: auth.recruiter.name || "Sarah Chen",
+      evaluatedBy: auth.recruiter.name || "Barun",
       evaluatedAt: score !== undefined ? new Date().toISOString() : undefined,
     };
 

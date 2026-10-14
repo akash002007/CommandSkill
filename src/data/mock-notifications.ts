@@ -13,7 +13,7 @@ export const initialMockNotifications: NotificationItem[] = [
   {
     id: "notif_2",
     type: "message",
-    title: "New Message from Sarah Chen (Stripe)",
+    title: "New Message from Barun (Stripe)",
     description: "Hi Alex! Your PulseFlow canvas project caught our engineering team's attention...",
     timestamp: "3 hours ago",
     isRead: false,

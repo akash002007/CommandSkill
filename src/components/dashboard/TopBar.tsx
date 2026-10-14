@@ -92,7 +92,7 @@ export function TopBar() {
           <span className="text-sm sm:text-base font-bold text-foreground">
             {greeting},{" "}
             <span className="text-blue-600 dark:text-blue-400">
-              {user?.name ? user.name.split(" ")[0] : isRecruiter ? "Sarah" : "Student"}
+              {user?.name ? user.name.split(" ")[0] : isRecruiter ? "Barun" : "Student"}
             </span>
           </span>
         </div>
@@ -241,7 +241,7 @@ export function TopBar() {
         <Link href={profilePageUrl} className="flex items-center">
           <Avatar
             src={user?.avatar}
-            name={user?.name || (isRecruiter ? "Sarah Chen" : "Student")}
+            name={user?.name || (isRecruiter ? "Barun" : "Student")}
             size="sm"
             isOnline={true}
           />

@@ -203,7 +203,7 @@ export class CalendarEngine {
       sourceType: "CAREER_MEETING",
       actionUrl: "/dashboard/recruiter/selection",
       metadata: {
-        interviewerName: "Sarah Chen (Director of Engineering)",
+        interviewerName: "Barun (Director of Engineering)",
         interviewerRole: "Hiring Lead",
         instructions: "Review candidate assessment score distributions before the call.",
       },

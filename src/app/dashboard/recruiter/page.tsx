@@ -17,8 +17,6 @@ import {
   Building2,
   UserCheck,
   Award,
-  Layers,
-  FileText,
   Video,
   ShieldCheck,
   ExternalLink,
@@ -32,11 +30,10 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Avatar } from "@/components/ui/Avatar";
 import { RoleGuard } from "@/components/dashboard/RoleGuard";
-import { getTimeAwareGreeting } from "@/lib/utils";
+import { getTimeAwareGreeting, cn } from "@/lib/utils";
 import { StructuredCandidateModal } from "@/components/recruiter/StructuredCandidateModal";
-import { RecruitmentDrive, RecruitmentApplication, CandidateInterviewRecord, RecruiterAuditLogEntry } from "@/types";
+import { RecruitmentDrive, RecruitmentApplication, CandidateInterviewRecord } from "@/types";
 import { WelcomeCard } from "@/components/dashboard/WelcomeCard";
-import { MetricCard } from "@/components/dashboard/MetricCard";
 import { useAuth } from "@/context/AuthContext";
 
 export default function RecruiterDashboardHomePage() {
@@ -58,7 +55,6 @@ export default function RecruiterDashboardHomePage() {
   const [activeDrives, setActiveDrives] = useState<RecruitmentDrive[]>([]);
   const [recentApplications, setRecentApplications] = useState<RecruitmentApplication[]>([]);
   const [upcomingInterviews, setUpcomingInterviews] = useState<CandidateInterviewRecord[]>([]);
-  const [recentAuditLogs, setRecentAuditLogs] = useState<RecruiterAuditLogEntry[]>([]);
 
   // Candidate Profile Modal
   const [selectedCandidate, setSelectedCandidate] = useState<RecruitmentApplication | null>(null);
@@ -80,7 +76,6 @@ export default function RecruiterDashboardHomePage() {
         if (data.activeDrives) setActiveDrives(data.activeDrives);
         if (data.recentApplications) setRecentApplications(data.recentApplications);
         if (data.upcomingInterviews) setUpcomingInterviews(data.upcomingInterviews);
-        if (data.recentAuditLogs) setRecentAuditLogs(data.recentAuditLogs);
       } else {
         setError("Unable to load latest recruiter metrics and active drives.");
       }
@@ -137,7 +132,7 @@ export default function RecruiterDashboardHomePage() {
         {/* Workspace Hero Header */}
         <WelcomeCard
           portalBadge="Structured Recruitment Workspace"
-          userName={user?.name || "Sarah Chen"}
+          userName={user?.name || "Barun"}
           description="Manage structured recruitment drives, evaluate academic eligibility, coordinate multi-stage assessments, and publish auditable merit lists."
           primaryAction={{
             label: "Create Recruitment Drive",
@@ -185,194 +180,138 @@ export default function RecruiterDashboardHomePage() {
           </Card>
         )}
 
-        {/* 6 Real Database KPI Metrics */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
-          <MetricCard
-            label="Active Drives"
-            value={kpis.activeDrivesCount}
-            hint="Live recruitment drives"
-            icon={<Briefcase className="w-4 h-4" />}
-            iconVariant="blue"
-            isLoading={isLoading}
-            href="/dashboard/recruiter/drives"
-          />
-
-          <MetricCard
-            label="Applications"
-            value={kpis.totalApplicationsCount}
-            hint="Candidate pipeline"
-            icon={<GitPullRequest className="w-4 h-4" />}
-            iconVariant="blue"
-            isLoading={isLoading}
-            href="/dashboard/recruiter/applications"
-          />
-
-          <MetricCard
-            label="Eligible"
-            value={kpis.eligibleCandidatesCount}
-            hint="100% Criteria Passed"
-            icon={<ShieldCheck className="w-4 h-4" />}
-            iconVariant="emerald"
-            isLoading={isLoading}
-            href="/dashboard/recruiter/screening"
-          />
-
-          <MetricCard
-            label="Shortlisted"
-            value={kpis.shortlistedCandidatesCount}
-            hint="Passed to Assessment"
-            icon={<UserCheck className="w-4 h-4" />}
-            iconVariant="purple"
-            isLoading={isLoading}
-            href="/dashboard/recruiter/selection"
-          />
-
-          <MetricCard
-            label="Interviews"
-            value={kpis.interviewsCount}
-            hint="Scheduled & In-Progress"
-            icon={<Calendar className="w-4 h-4" />}
-            iconVariant="amber"
-            isLoading={isLoading}
-            href="/dashboard/recruiter/interviews"
-          />
-
-          <MetricCard
-            label="Selected"
-            value={kpis.selectedCandidatesCount}
-            hint="Final merit offers"
-            icon={<Award className="w-4 h-4" />}
-            iconVariant="rose"
-            isLoading={isLoading}
-            href="/dashboard/recruiter/results"
-          />
-        </div>
-
-        {/* Recruitment Pipeline Funnel Overview */}
-        <Card className="p-5 border-border bg-card shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
-            <div>
-              <div className="flex items-center gap-2">
-                <Layers className="w-4 h-4 text-blue-500" />
-                <h2 className="text-base font-bold text-foreground">
-                  Structured Recruitment Workflow Funnel
-                </h2>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Stage progression pipeline across all active drives.
-              </p>
-            </div>
-            <Link
-              href="/dashboard/recruiter/selection"
-              className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
-            >
-              Stage Manager <ChevronRight className="w-3.5 h-3.5" />
-            </Link>
+        {/* 1. Top: Recruitment Overview (Compact KPI Row) */}
+        <Card className="p-4 sm:p-5 border-border/80 bg-card rounded-2xl shadow-xs space-y-3.5">
+          <div>
+            <h2 className="text-base font-bold text-foreground">
+              Recruitment Overview
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Live recruitment activity across all active drives
+            </p>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {[
-              {
-                step: "1. Drive & Criteria",
-                label: `${kpis.activeDrivesCount} Active`,
-                sub: "Structured rules",
-                color: "border-blue-500/30 bg-blue-500/5",
-              },
-              {
-                step: "2. Applications",
-                label: `${kpis.totalApplicationsCount} Applied`,
-                sub: "Pipeline intake",
-                color: "border-blue-500/30 bg-blue-500/5",
-              },
-              {
-                step: "3. Eligibility Check",
-                label: `${kpis.eligibleCandidatesCount} Eligible`,
-                sub: "Criteria verified",
-                color: "border-blue-500/30 bg-emerald-500/5",
-              },
-              {
-                step: "4. Assessment Round",
-                label: `${kpis.shortlistedCandidatesCount} In Test`,
-                sub: "Score recording",
-                color: "border-blue-500/30 bg-blue-500/5",
-              },
-              {
-                step: "5. Interview Round",
-                label: `${kpis.interviewsCount} Scheduled`,
-                sub: "Evaluations",
-                color: "border-blue-500/30 bg-amber-500/5",
-              },
-              {
-                step: "6. Merit & Selection",
-                label: `${kpis.selectedCandidatesCount} Selected`,
-                sub: "Locked results",
-                color: "border-rose-500/30 bg-primary/5",
-              },
-            ].map((f, i) => (
-              <div key={i} className={`p-3 rounded-2xl border ${f.color} space-y-1`}>
-                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                  {f.step}
-                </div>
-                <div className="text-sm font-extrabold text-foreground">{f.label}</div>
-                <div className="text-[11px] text-muted-foreground">{f.sub}</div>
-              </div>
-            ))}
+          <div className="overflow-x-auto pb-1 no-scrollbar">
+            <div className="grid grid-cols-6 min-w-[680px] lg:min-w-0 gap-2.5 sm:gap-3">
+              {[
+                {
+                  label: "Active Drives",
+                  value: kpis.activeDrivesCount,
+                  icon: <Briefcase className="w-3.5 h-3.5" />,
+                  iconVariant: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+                  href: "/dashboard/recruiter/drives",
+                },
+                {
+                  label: "Applications",
+                  value: kpis.totalApplicationsCount,
+                  icon: <GitPullRequest className="w-3.5 h-3.5" />,
+                  iconVariant: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20",
+                  href: "/dashboard/recruiter/applications",
+                },
+                {
+                  label: "Eligible",
+                  value: kpis.eligibleCandidatesCount,
+                  icon: <ShieldCheck className="w-3.5 h-3.5" />,
+                  iconVariant: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                  href: "/dashboard/recruiter/screening",
+                },
+                {
+                  label: "Shortlisted",
+                  value: kpis.shortlistedCandidatesCount,
+                  icon: <UserCheck className="w-3.5 h-3.5" />,
+                  iconVariant: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+                  href: "/dashboard/recruiter/selection",
+                },
+                {
+                  label: "Interviews",
+                  value: kpis.interviewsCount,
+                  icon: <Calendar className="w-3.5 h-3.5" />,
+                  iconVariant: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                  href: "/dashboard/recruiter/interviews",
+                },
+                {
+                  label: "Selected",
+                  value: kpis.selectedCandidatesCount,
+                  icon: <Award className="w-3.5 h-3.5" />,
+                  iconVariant: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+                  href: "/dashboard/recruiter/results",
+                },
+              ].map((metric) => (
+                <Link
+                  key={metric.label}
+                  href={metric.href}
+                  className="group p-2.5 sm:p-3 rounded-xl bg-muted/20 hover:bg-muted/40 border border-border/70 hover:border-blue-500/30 transition-all flex items-center gap-2.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                >
+                  <div
+                    className={cn(
+                      "w-7 h-7 sm:w-8 sm:h-8 rounded-lg border flex items-center justify-center shrink-0 transition-transform group-hover:scale-105",
+                      metric.iconVariant
+                    )}
+                  >
+                    {metric.icon}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-base sm:text-lg font-black text-foreground tracking-tight leading-none">
+                      {isLoading ? (
+                        <span className="inline-block w-5 h-4 bg-muted animate-pulse rounded" />
+                      ) : (
+                        metric.value
+                      )}
+                    </div>
+                    <div className="text-[11px] font-medium text-muted-foreground truncate mt-1">
+                      {metric.label}
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
           </div>
         </Card>
 
-        {/* Two Column Section: Active Recruitment Drives & Upcoming Interviews */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Active Drives (2 Cols) */}
-          <div className="lg:col-span-2 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-bold text-foreground flex items-center gap-2">
-                  <Briefcase className="w-4 h-4 text-blue-500" />
+        {/* 2. Main Dashboard Grid — Row 1: Active Drives (62%) + Upcoming Interviews (38%) */}
+        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1.63fr)_minmax(0,1fr)] gap-6 items-start">
+          {/* LEFT (approx 62%): Active Recruitment Drives */}
+          <Card className="p-5 border-border/80 bg-card rounded-2xl shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-border/60">
+              <div className="flex items-center gap-2">
+                <Briefcase className="w-4 h-4 text-blue-500" />
+                <h2 className="text-base font-bold text-foreground">
                   Active Recruitment Drives
                 </h2>
-                <p className="text-xs text-muted-foreground">
-                  Recruitment campaigns currently accepting candidates and undergoing multi-stage evaluation.
-                </p>
               </div>
               <Link
                 href="/dashboard/recruiter/drives"
-                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5"
               >
-                View All ({activeDrives.length}) <ChevronRight className="w-3.5 h-3.5" />
+                <span>View All ({activeDrives.length})</span>
+                <ChevronRight className="w-3.5 h-3.5" />
               </Link>
             </div>
 
             {isLoading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 {[1, 2].map((i) => (
-                  <Card key={i} className="p-5 space-y-4 animate-pulse">
-                    <div className="flex justify-between">
-                      <div className="h-5 w-20 bg-muted rounded" />
-                      <div className="h-5 w-16 bg-muted rounded" />
-                    </div>
-                    <div className="h-6 w-3/4 bg-muted rounded" />
-                    <div className="h-4 w-full bg-muted rounded" />
-                    <div className="pt-3 border-t border-border flex justify-between">
-                      <div className="h-7 w-24 bg-muted rounded" />
-                      <div className="h-7 w-20 bg-muted rounded" />
-                    </div>
-                  </Card>
+                  <div key={i} className="p-4 rounded-xl border border-border/60 space-y-3 animate-pulse bg-muted/20">
+                    <div className="h-4 w-28 bg-muted rounded" />
+                    <div className="h-3 w-40 bg-muted rounded" />
+                    <div className="h-12 w-full bg-muted rounded" />
+                  </div>
                 ))}
               </div>
             ) : activeDrives.length === 0 ? (
-              <Card className="p-8 text-center text-sm text-muted-foreground bg-card">
+              <div className="p-8 text-center text-xs text-muted-foreground">
                 No active recruitment drives found.
-              </Card>
+              </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 {activeDrives.map((drive) => (
-                  <Card
+                  <div
                     key={drive.id}
-                    className="p-5 border-border/80 hover:border-blue-500/40 transition-all bg-card flex flex-col justify-between space-y-4"
+                    className="p-4 rounded-xl border border-border/80 hover:border-blue-500/40 transition-all bg-card flex flex-col justify-between space-y-3 shadow-xs"
                   >
-                    <div className="space-y-2">
+                    <div className="space-y-1.5">
                       <div className="flex items-start justify-between gap-2">
-                        <Badge variant="purple" size="sm" className="font-bold uppercase tracking-wider">
+                        <Badge variant="purple" size="sm" className="font-bold text-[10px] uppercase tracking-wider py-0 px-1.5">
                           {drive.status.replace("_", " ")}
                         </Badge>
                         <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
@@ -380,14 +319,11 @@ export default function RecruiterDashboardHomePage() {
                         </span>
                       </div>
 
-                      <h3 className="font-extrabold text-base text-foreground leading-snug line-clamp-1">
+                      <h3 className="font-bold text-sm text-foreground leading-snug line-clamp-1">
                         {drive.title}
                       </h3>
-                      <p className="text-xs text-muted-foreground line-clamp-2">
-                        {drive.description}
-                      </p>
 
-                      <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground pt-1">
+                      <div className="text-[11px] text-muted-foreground truncate flex items-center gap-1.5">
                         <span className="font-medium text-foreground">{drive.department}</span>
                         <span>•</span>
                         <span>{drive.location}</span>
@@ -396,223 +332,185 @@ export default function RecruiterDashboardHomePage() {
                       </div>
                     </div>
 
-                    <div className="pt-3 border-t border-border/80 space-y-3">
-                      <div className="grid grid-cols-3 gap-1 text-center text-xs">
-                        <div className="p-2 rounded-xl bg-muted/60">
-                          <div className="font-extrabold text-foreground">{drive.applicantsCount}</div>
+                    <div className="space-y-2.5 pt-2 border-t border-border/60">
+                      <div className="grid grid-cols-3 gap-1.5 text-center py-1.5 px-2 rounded-lg bg-muted/30 border border-border/40">
+                        <div>
+                          <div className="font-extrabold text-xs text-foreground">{drive.applicantsCount}</div>
                           <div className="text-[10px] text-muted-foreground">Applied</div>
                         </div>
-                        <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
-                          <div className="font-extrabold">{drive.eligibleCount}</div>
-                          <div className="text-[10px]">Eligible</div>
+                        <div>
+                          <div className="font-extrabold text-xs text-emerald-600 dark:text-emerald-400">{drive.eligibleCount}</div>
+                          <div className="text-[10px] text-muted-foreground">Eligible</div>
                         </div>
-                        <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600">
-                          <div className="font-extrabold">{drive.shortlistedCount}</div>
-                          <div className="text-[10px]">Shortlisted</div>
+                        <div>
+                          <div className="font-extrabold text-xs text-blue-600 dark:text-blue-400">{drive.shortlistedCount}</div>
+                          <div className="text-[10px] text-muted-foreground">Shortlisted</div>
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between gap-2 pt-1">
+                      <div className="flex items-center justify-between gap-2 pt-0.5">
                         <Link
                           href={`/dashboard/recruiter/screening?driveId=${drive.id}`}
-                          className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline"
+                          className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
                         >
-                          Screen Candidates →
+                          <span>Screen Candidates</span>
+                          <ArrowRight className="w-3 h-3" />
                         </Link>
                         <Link href={`/dashboard/recruiter/results?driveId=${drive.id}`}>
-                          <Button size="sm" variant="outline" className="h-7 text-xs">
+                          <Button size="sm" variant="outline" className="h-7 text-xs px-2.5">
                             Merit & Results
                           </Button>
                         </Link>
                       </div>
                     </div>
-                  </Card>
+                  </div>
                 ))}
               </div>
             )}
-          </div>
+          </Card>
 
-          {/* Upcoming Interviews & Audit Feed (1 Col) */}
-          <div className="space-y-6">
-            {/* TODAY'S SCHEDULE (Section 19: Recruiter Dashboard Integration) */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between pb-1 border-b border-border/50">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-purple-500/10 text-purple-600 flex items-center justify-center">
-                    <Calendar className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-600 dark:text-purple-400 block">
-                      TODAY&apos;S SCHEDULE
-                    </span>
-                    <h2 className="text-xs font-bold text-foreground">
-                      Candidate Interviews &amp; Slots
-                    </h2>
-                  </div>
-                </div>
-                <Link
-                  href="/dashboard/recruiter/calendar"
-                  className="text-xs font-semibold text-purple-600 dark:text-purple-400 hover:underline"
-                >
-                  View Calendar →
-                </Link>
+          {/* RIGHT (approx 38%): Upcoming Interviews */}
+          <Card className="p-5 border-border/80 bg-card rounded-2xl shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-border/60">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-purple-500" />
+                <h2 className="text-base font-bold text-foreground">
+                  Upcoming Interviews
+                </h2>
               </div>
-
-              <div className="space-y-2.5">
-                {upcomingInterviews.length === 0 ? (
-                  <Card className="p-6 text-center text-xs text-muted-foreground bg-card">
-                    No interviews scheduled for today.
-                  </Card>
-                ) : (
-                  upcomingInterviews.slice(0, 4).map((int) => {
-                    const isFinal = int.roundType === "FINAL" || (int.roundName || "").toLowerCase().includes("final");
-                    const roundLabel = int.roundName || (isFinal ? "Final Round" : `${int.roundType || "Technical"} Round`);
-
-                    return (
-                      <Card
-                        key={int.id}
-                        className={`p-3.5 bg-card border transition-all hover:border-purple-500/40 ${
-                          isFinal ? "border-rose-500/30 bg-rose-500/5 ring-1 ring-rose-500/15" : "border-border"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <Avatar src={int.candidateAvatar} alt={int.candidateName} size="sm" />
-                            <div className="min-w-0">
-                              <div className="text-xs font-bold text-foreground truncate">{int.candidateName}</div>
-                              <div className="text-[11px] text-muted-foreground truncate">{int.driveTitle || "Internship Candidate"}</div>
-                            </div>
-                          </div>
-
-                          <div className="text-right shrink-0">
-                            <span className="text-xs font-extrabold text-purple-600 dark:text-purple-400 block">
-                              {int.time}
-                            </span>
-                            {isFinal ? (
-                              <Badge variant="rose" className="text-[9px] px-1.5 py-0 font-extrabold">
-                                Final Round
-                              </Badge>
-                            ) : (
-                              <Badge variant="purple" className="text-[9px] px-1.5 py-0">
-                                {roundLabel}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="mt-2.5 pt-2 border-t border-border/60 flex items-center justify-between text-[11px] text-muted-foreground">
-                          <span className="text-[10px] text-muted-foreground">
-                            {int.interviewerName || "Interviewer Assigned"}
-                          </span>
-                          {int.meetingLink && (
-                            <a
-                              href={int.meetingLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-xs font-semibold text-purple-600 dark:text-purple-400 hover:underline"
-                            >
-                              <Video className="w-3.5 h-3.5" /> Join Meet
-                            </a>
-                          )}
-                        </div>
-                      </Card>
-                    );
-                  })
-                )}
-              </div>
-
-              <Link href="/dashboard/recruiter/calendar" className="block pt-1">
-                <Button variant="outline" size="sm" className="w-full text-xs h-8 font-semibold">
-                  View Calendar
-                </Button>
+              <Link
+                href="/dashboard/recruiter/calendar"
+                className="text-xs font-semibold text-purple-600 dark:text-purple-400 hover:underline flex items-center gap-0.5"
+              >
+                <span>View Calendar</span>
+                <ChevronRight className="w-3.5 h-3.5" />
               </Link>
             </div>
 
-            {/* Recent Audit Activity */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-base font-bold text-foreground flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-blue-500" />
-                  Recent Audit Trail
-                </h2>
-                <Link
-                  href="/dashboard/recruiter/audit-logs"
-                  className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
-                >
-                  All Logs
-                </Link>
-              </div>
+            <div className="space-y-2.5 max-h-[380px] overflow-y-auto no-scrollbar pr-0.5">
+              {upcomingInterviews.length === 0 ? (
+                <div className="p-6 text-center text-xs text-muted-foreground">
+                  No interviews scheduled for today.
+                </div>
+              ) : (
+                upcomingInterviews.slice(0, 3).map((int) => {
+                  const isFinal = int.roundType === "FINAL" || (int.roundName || "").toLowerCase().includes("final");
+                  const roundLabel = int.roundName || (isFinal ? "Final Round" : `${int.roundType || "Technical"} Round`);
 
-              <div className="space-y-2">
-                {recentAuditLogs.slice(0, 4).map((log) => (
-                  <div
-                    key={log.id}
-                    className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-border text-[11px] space-y-0.5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-foreground">{log.action.replace(/_/g, " ")}</span>
-                      <span className="text-[10px] text-muted-foreground">
-                        {new Date(log.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </span>
+                  return (
+                    <div
+                      key={int.id}
+                      className={cn(
+                        "p-3 rounded-xl bg-card border border-border/80 transition-all hover:border-purple-500/40 space-y-2 shadow-xs",
+                        isFinal && "border-rose-500/30 bg-rose-500/[0.02]"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Avatar src={int.candidateAvatar} alt={int.candidateName} size="sm" />
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-foreground truncate">{int.candidateName}</div>
+                            <div className="text-[11px] text-muted-foreground truncate">{int.driveTitle || "Candidate"}</div>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <span className="text-xs font-extrabold text-purple-600 dark:text-purple-400 block">
+                            {int.time}
+                          </span>
+                          <Badge
+                            variant={isFinal ? "rose" : "purple"}
+                            className="text-[9px] px-1.5 py-0 font-medium mt-0.5"
+                          >
+                            {roundLabel}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-border/60 flex items-center justify-between text-[11px]">
+                        <span className="text-[10px] text-muted-foreground truncate max-w-[130px]">
+                          {int.interviewerName || "Interviewer Assigned"}
+                        </span>
+                        {int.meetingLink ? (
+                          <a
+                            href={int.meetingLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-purple-600 dark:text-purple-400 hover:underline shrink-0"
+                          >
+                            <Video className="w-3.5 h-3.5" /> Join Meet
+                          </a>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">Slot Scheduled</span>
+                        )}
+                      </div>
                     </div>
-                    <p className="text-muted-foreground line-clamp-1">{log.details}</p>
-                  </div>
-                ))}
-              </div>
+                  );
+                })
+              )}
             </div>
-          </div>
+
+            <Link href="/dashboard/recruiter/calendar" className="block pt-1">
+              <Button variant="outline" size="sm" className="w-full text-xs h-8 font-semibold">
+                View Calendar
+              </Button>
+            </Link>
+          </Card>
         </div>
 
-        {/* Recent Applications Table */}
-        <Card className="p-5 border-border bg-card shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        {/* 3. Recent Candidate Applications */}
+        <Card className="p-5 border-border/80 bg-card rounded-2xl shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-border/60">
             <div>
               <div className="flex items-center gap-2">
                 <GitPullRequest className="w-4 h-4 text-blue-500" />
-                <h2 className="text-base font-bold text-foreground">Recent Candidate Applications</h2>
+                <h2 className="text-base font-bold text-foreground">
+                  Recent Candidate Applications
+                </h2>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Inspect structured candidate qualifications, eligibility pass/fail status, and screening decisions.
+                Live candidate submissions and eligibility verification
               </p>
             </div>
             <Link
               href="/dashboard/recruiter/applications"
-              className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+              className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 shrink-0"
             >
-              View Full Pipeline ({kpis.totalApplicationsCount}) <ChevronRight className="w-3.5 h-3.5" />
+              <span>View Full Pipeline ({kpis.totalApplicationsCount})</span>
+              <ChevronRight className="w-3.5 h-3.5" />
             </Link>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-border">
+          <div className="overflow-x-auto rounded-xl border border-border/80">
             <table className="w-full text-left text-xs">
-              <thead className="bg-muted/60 border-b border-border text-muted-foreground">
+              <thead className="bg-muted/50 border-b border-border/80 text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-3 font-semibold">Candidate</th>
-                  <th className="px-4 py-3 font-semibold">Drive / Position</th>
-                  <th className="px-4 py-3 font-semibold">Eligibility Verification</th>
-                  <th className="px-4 py-3 font-semibold">Stage</th>
-                  <th className="px-4 py-3 font-semibold">Status</th>
-                  <th className="px-4 py-3 font-semibold text-right">Actions</th>
+                  <th className="px-3.5 py-2.5 font-semibold">Candidate</th>
+                  <th className="px-3 py-2.5 font-semibold">Drive / Position</th>
+                  <th className="px-3 py-2.5 font-semibold">Eligibility</th>
+                  <th className="px-3 py-2.5 font-semibold">Stage</th>
+                  <th className="px-3 py-2.5 font-semibold">Status</th>
+                  <th className="px-3.5 py-2.5 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border bg-card">
+              <tbody className="divide-y divide-border/60 bg-card">
                 {isLoading ? (
                   [1, 2, 3].map((i) => (
                     <tr key={i} className="animate-pulse">
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-muted" />
+                      <td className="px-3.5 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-full bg-muted" />
                           <div className="space-y-1">
-                            <div className="w-24 h-4 bg-muted rounded" />
-                            <div className="w-32 h-3 bg-muted rounded" />
+                            <div className="w-20 h-3 bg-muted rounded" />
+                            <div className="w-28 h-2.5 bg-muted rounded" />
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3.5"><div className="w-28 h-4 bg-muted rounded" /></td>
-                      <td className="px-4 py-3.5"><div className="w-20 h-5 bg-muted rounded" /></td>
-                      <td className="px-4 py-3.5"><div className="w-16 h-4 bg-muted rounded" /></td>
-                      <td className="px-4 py-3.5"><div className="w-20 h-5 bg-muted rounded" /></td>
-                      <td className="px-4 py-3.5 text-right"><div className="w-16 h-7 bg-muted rounded ml-auto" /></td>
+                      <td className="px-3 py-3"><div className="w-24 h-3 bg-muted rounded" /></td>
+                      <td className="px-3 py-3"><div className="w-16 h-4 bg-muted rounded" /></td>
+                      <td className="px-3 py-3"><div className="w-16 h-3 bg-muted rounded" /></td>
+                      <td className="px-3 py-3"><div className="w-16 h-4 bg-muted rounded" /></td>
+                      <td className="px-3.5 py-3 text-right"><div className="w-16 h-6 bg-muted rounded ml-auto" /></td>
                     </tr>
                   ))
                 ) : recentApplications.length === 0 ? (
@@ -623,58 +521,63 @@ export default function RecruiterDashboardHomePage() {
                   </tr>
                 ) : (
                   recentApplications.map((app) => (
-                    <tr key={app.id} className="hover:bg-muted/40 transition-colors">
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-3">
+                    <tr key={app.id} className="hover:bg-muted/30 transition-colors">
+                      <td className="px-3.5 py-3">
+                        <div className="flex items-center gap-2.5">
                           <Avatar src={app.studentAvatar} alt={app.studentName} size="sm" />
-                          <div>
-                            <div className="font-bold text-foreground">{app.studentName}</div>
-                            <div className="text-[11px] text-muted-foreground">
+                          <div className="min-w-0">
+                            <div className="font-bold text-foreground truncate">{app.studentName}</div>
+                            <div className="text-[11px] text-muted-foreground truncate">
                               {app.degree} • {app.university}
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3.5 text-foreground font-medium">{app.driveTitle}</td>
-                      <td className="px-4 py-3.5">
+                      <td className="px-3 py-3 text-foreground font-medium truncate max-w-[200px]">
+                        {app.driveTitle}
+                      </td>
+                      <td className="px-3 py-3">
                         {app.eligibility ? (
                           <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                            className={cn(
+                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border",
                               app.eligibility.status === "ELIGIBLE"
-                                ? "bg-emerald-500/10 text-emerald-600 border border-blue-500/30"
+                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
                                 : app.eligibility.status === "REQUIRES_MANUAL_REVIEW"
-                                ? "bg-amber-500/10 text-amber-600 border border-blue-500/30"
-                                : "bg-primary/10 text-rose-600 border border-rose-500/30"
-                            }`}
+                                ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                                : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                            )}
                           >
                             {app.eligibility.status === "ELIGIBLE" ? (
-                              <CheckCircle2 className="w-3 h-3" />
+                              <CheckCircle2 className="w-2.5 h-2.5" />
                             ) : (
-                              <AlertTriangle className="w-3 h-3" />
+                              <AlertTriangle className="w-2.5 h-2.5" />
                             )}
                             {app.eligibility.status === "ELIGIBLE"
                               ? "100% Eligible"
                               : app.eligibility.status === "REQUIRES_MANUAL_REVIEW"
                               ? "Review Needed"
-                              : "Failed Criteria"}
+                              : "Failed"}
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">Pending</span>
+                          <span className="text-[11px] text-muted-foreground">Pending</span>
                         )}
                       </td>
-                      <td className="px-4 py-3.5">
-                        <span className="font-semibold text-foreground">{app.currentStageName}</span>
+                      <td className="px-3 py-3">
+                        <span className="font-medium text-foreground text-[11px] truncate block max-w-[150px]">
+                          {app.currentStageName}
+                        </span>
                       </td>
-                      <td className="px-4 py-3.5">
-                        <Badge variant="purple" size="sm">
+                      <td className="px-3 py-3">
+                        <Badge variant="purple" size="sm" className="text-[10px] py-0 px-1.5 font-medium">
                           {app.status.replace("_", " ")}
                         </Badge>
                       </td>
-                      <td className="px-4 py-3.5 text-right">
+                      <td className="px-3.5 py-3 text-right">
                         <Button
                           variant="outline"
                           size="sm"
-                          className="h-7 text-xs font-semibold"
+                          className="h-6 text-[11px] px-2 font-medium"
                           onClick={() => handleOpenCandidate(app)}
                         >
                           Inspect Profile

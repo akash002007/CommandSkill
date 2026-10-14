@@ -34,6 +34,34 @@ interface AuthContextType {
     redirectUrl?: string;
     error?: string;
   }>;
+  loginWithCredentials: (
+    email: string,
+    password: string,
+    role?: UserRole
+  ) => Promise<{
+    success: boolean;
+    user?: User;
+    token?: string;
+    refreshToken?: string;
+    redirectUrl?: string;
+    error?: string;
+  }>;
+  loginWithDemo: (role: UserRole) => Promise<{
+    success: boolean;
+    user?: User;
+    token?: string;
+    refreshToken?: string;
+    redirectUrl?: string;
+    error?: string;
+  }>;
+  resetPassword: (
+    email: string,
+    newPassword?: string
+  ) => Promise<{
+    success: boolean;
+    message?: string;
+    error?: string;
+  }>;
   registerStudent: (basicData: {
     name: string;
     email: string;
@@ -54,9 +82,15 @@ interface AuthContextType {
     department?: string;
     recruiterRole?: string;
     recruiterUsage?: string[];
-  }) => RecruiterProfile;
+  }) => Promise<RecruiterProfile> | RecruiterProfile;
   logout: () => void;
-  switchRole: (newRole: UserRole) => void;
+  switchRole: (newRole: UserRole) => Promise<{
+    success: boolean;
+    user?: User;
+    role?: UserRole;
+    redirectUrl?: string;
+    error?: string;
+  }>;
   updateStudentProfile: (updates: Partial<StudentProfile>) => void;
   updateRecruiterProfile: (updates: Partial<RecruiterProfile>) => void;
   submitStudentVerification: (data: {
@@ -192,13 +226,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  // Initialize from localStorage on mount & sync with server
+  // Initialize from localStorage and cookies on mount & sync with server
   useEffect(() => {
     try {
+      const cookieToken = typeof document !== "undefined"
+        ? document.cookie
+            .split("; ")
+            .find((row) => row.startsWith("commandskill_access_token="))
+            ?.split("=")[1]
+        : null;
+      const localToken = typeof localStorage !== "undefined" ? localStorage.getItem("commandskill_access_token") : null;
+      const effectiveToken = cookieToken || localToken;
+
       const storedRole = localStorage.getItem(ROLE_STORAGE_KEY) as UserRole | null;
       const storedUserJson = localStorage.getItem(AUTH_STORAGE_KEY);
 
-      if (storedUserJson) {
+      // If no valid auth token exists in either cookie or localStorage, clear stale local session
+      if (!effectiveToken) {
+        setUser(null);
+        setRole("STUDENT");
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+        localStorage.removeItem(ROLE_STORAGE_KEY);
+      } else if (storedUserJson) {
         const parsedUser = JSON.parse(storedUserJson);
         setUser(parsedUser);
         const resolvedRole = normalizeRole(storedRole || parsedUser.role || "STUDENT");
@@ -344,117 +393,204 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const loginWithDemo = async (targetRole: UserRole) => {
+    try {
+      const res = await fetch("/api/auth/demo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: targetRole }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success && data.user) {
+        const mappedRole = normalizeRole(data.user.role);
+        const resolvedUser = { ...data.user, role: mappedRole };
+        setUser(resolvedUser);
+        setRole(mappedRole);
+        persistSession(resolvedUser, mappedRole);
+
+        try {
+          if (data.token) {
+            localStorage.setItem("commandskill_access_token", data.token);
+            // Ensure cookie is immediately available in client document
+            document.cookie = `commandskill_access_token=${data.token}; path=/; max-age=604800; SameSite=Lax`;
+          }
+          if (data.refreshToken) {
+            localStorage.setItem("commandskill_refresh_token", data.refreshToken);
+            document.cookie = `commandskill_refresh_token=${data.refreshToken}; path=/; max-age=2592000; SameSite=Lax`;
+          }
+          if (data.token) {
+            document.cookie = `sb-access-token=${data.token}; path=/; max-age=604800; SameSite=Lax`;
+          }
+        } catch {
+          console.warn("Could not save auth tokens to storage");
+        }
+
+        return {
+          success: true,
+          user: resolvedUser,
+          token: data.token,
+          refreshToken: data.refreshToken,
+          redirectUrl: data.redirectUrl,
+        };
+      } else {
+        return {
+          success: false,
+          error: data.error || "Demo authentication failed",
+        };
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || "Demo login service temporarily unreachable. Please try again.",
+      };
+    }
+  };
+
+  const loginWithCredentials = async (email: string, password: string, targetRole?: UserRole) => {
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, role: targetRole }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success && data.user) {
+        const mappedRole = normalizeRole(data.user.role);
+        const resolvedUser = { ...data.user, role: mappedRole };
+        setUser(resolvedUser);
+        setRole(mappedRole);
+        persistSession(resolvedUser, mappedRole);
+
+        try {
+          if (data.token) {
+            localStorage.setItem("commandskill_access_token", data.token);
+            document.cookie = `commandskill_access_token=${data.token}; path=/; max-age=604800; SameSite=Lax`;
+            document.cookie = `sb-access-token=${data.token}; path=/; max-age=604800; SameSite=Lax`;
+          }
+          if (data.refreshToken) {
+            localStorage.setItem("commandskill_refresh_token", data.refreshToken);
+            document.cookie = `commandskill_refresh_token=${data.refreshToken}; path=/; max-age=2592000; SameSite=Lax`;
+          }
+        } catch {
+          console.warn("Could not save auth tokens to storage");
+        }
+
+        return {
+          success: true,
+          user: resolvedUser,
+          token: data.token,
+          refreshToken: data.refreshToken,
+          redirectUrl: data.redirectUrl,
+        };
+      } else {
+        return {
+          success: false,
+          error: data.error || "Invalid email or password. Please verify your credentials.",
+        };
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || "Login service temporarily unavailable. Please try again.",
+      };
+    }
+  };
+
+  const resetPassword = async (email: string, newPassword?: string) => {
+    try {
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, newPassword }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        return { success: true, message: data.message };
+      } else {
+        return { success: false, error: data.error || "Password reset failed" };
+      }
+    } catch (err: any) {
+      return { success: false, error: err?.message || "Service temporarily unavailable" };
+    }
+  };
+
   const registerStudent = async (basicData: {
     name: string;
     email: string;
     university: string;
     password?: string;
   }): Promise<StudentProfile> => {
-    const isUni = isUniversityEmail(basicData.email);
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "student",
+          name: basicData.name.trim(),
+          email: basicData.email.trim(),
+          password: basicData.password || "commandskill123",
+          university: basicData.university.trim(),
+        }),
+      });
 
-    const newStudent: StudentProfile = {
-      id: `student_${Date.now()}`,
-      name: basicData.name.trim(),
-      email: basicData.email.trim(),
-      role: "student",
-      avatar:
-        "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
-      headline: `Student @ ${basicData.university.trim() || "University"}`,
-      university: basicData.university.trim(),
-      degree: "",
-      branch: "",
-      academicStream: "Engineering & Technology",
-      specialization: "",
-      academicLevel: "Undergraduate",
-      yearOfStudy: "1st Year",
-      graduationYear: new Date().getFullYear() + 4,
-      cgpa: "",
-      location: "Campus / Remote",
-      bio: "",
-      phone: "",
-      hasUniversityEmail: isUni,
-      isUniversityEmail: isUni,
-      personalEmail: "",
-      status: "Looking for Part-time",
-      skills: [],
-      resume: null,
-      projects: [],
-      certifications: [],
-      socialLinks: {},
-      stats: {
-        profileViews: 1,
-        searchAppearances: 0,
-        applicationsCount: 0,
-        interviewsCount: 0,
-      },
-      accountStatus: "account_created",
-      verificationStatus: isUni ? "approved" : "not_submitted",
-      onboardingCompleted: false,
-      verificationRequest: isUni
-        ? {
-            id: `req_uni_${Date.now()}`,
-            studentId: `student_${Date.now()}`,
-            studentName: basicData.name.trim(),
-            university: basicData.university.trim(),
-            universityEmail: basicData.email.trim(),
-            verificationType: "university_email",
-            status: "approved",
-            documentName: "Institutional Email Verification",
-            documentSize: "Verified Domain",
-            documentUrl: "#",
-            submittedAt: new Date().toLocaleString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            reviewedAt: new Date().toLocaleString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            reviewerName: "Institutional Domain Verification System",
+      const data = await res.json();
+
+      if (res.ok && data.success && data.user) {
+        const mappedRole = normalizeRole(data.user.role);
+        const resolvedUser = { ...data.user, role: mappedRole } as StudentProfile;
+        setUser(resolvedUser);
+        setRole(mappedRole);
+        persistSession(resolvedUser, mappedRole);
+
+        try {
+          if (data.token) {
+            localStorage.setItem("commandskill_access_token", data.token);
+            document.cookie = `commandskill_access_token=${data.token}; path=/; max-age=604800; SameSite=Lax`;
+            document.cookie = `sb-access-token=${data.token}; path=/; max-age=604800; SameSite=Lax`;
           }
-        : null,
-    };
+          if (data.refreshToken) {
+            localStorage.setItem("commandskill_refresh_token", data.refreshToken);
+            document.cookie = `commandskill_refresh_token=${data.refreshToken}; path=/; max-age=2592000; SameSite=Lax`;
+          }
+        } catch {}
 
-    // Auto submit to backend if uni email
-    if (isUni) {
-      try {
-        await fetch("/api/student/verification", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            studentId: newStudent.id,
-            studentName: newStudent.name,
-            email: newStudent.email,
-            college: newStudent.university,
-            degree: "Undergraduate",
-            branch: "General",
-            year: "1st Year",
-            studentIdNumber: "AUTO-EDU-VERIFIED",
-            graduationYear: newStudent.graduationYear,
-            verificationType: "university_email",
-            documentName: "Institutional Domain Check",
-            documentSize: "Domain Verified",
-            documentUrl: "#",
-          }),
-        });
-      } catch (err) {
-        console.warn("Failed to post uni verification to backend:", err);
+        return resolvedUser;
+      } else {
+        throw new Error(data.error || "Failed to register student account");
       }
-    }
+    } catch (err: any) {
+      if (err?.message && !err.message.includes("Failed to fetch")) {
+        throw err;
+      }
 
-    setUser(newStudent);
-    setRole("STUDENT");
-    persistSession(newStudent, "STUDENT");
-    return newStudent;
+      // Fallback local registration if network completely unavailable
+      const isUni = isUniversityEmail(basicData.email);
+      const fallbackStudent: StudentProfile = {
+        ...defaultStudentUser,
+        id: `student_${Date.now()}`,
+        name: basicData.name.trim(),
+        email: basicData.email.trim(),
+        university: basicData.university.trim(),
+        role: "student",
+        hasUniversityEmail: isUni,
+        isUniversityEmail: isUni,
+        accountStatus: isUni ? "onboarding_complete" : "account_created",
+        verificationStatus: isUni ? "approved" : "not_submitted",
+        onboardingCompleted: isUni,
+      };
+      setUser(fallbackStudent);
+      setRole("STUDENT");
+      persistSession(fallbackStudent, "STUDENT");
+      return fallbackStudent;
+    }
   };
 
-  const registerRecruiter = (data: {
+  const registerRecruiter = async (data: {
     name: string;
     email: string;
     phone?: string;
@@ -468,38 +604,74 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     department?: string;
     recruiterRole?: string;
     recruiterUsage?: string[];
-  }): RecruiterProfile => {
-    const newRecruiter: RecruiterProfile = {
-      id: `recruiter_${Date.now()}`,
-      name: data.name.trim(),
-      email: data.email.trim(),
-      phone: data.phone?.trim() || "",
-      role: "recruiter",
-      avatar:
-        "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80",
-      title: data.jobTitle?.trim() || "University Talent Partner",
-      department: data.department?.trim() || "University Talent & Early Career",
-      company: data.companyName.trim() || "Technology Partner",
-      companyLogo:
-        "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=80&auto=format&fit=crop&q=80",
-      companyWebsite: data.companyWebsite?.trim() || "",
-      companyLocation: data.companyLocation?.trim() || "San Francisco, CA",
-      companySize: data.companySize || "500 - 1,000 employees",
-      companyType: data.companyType || "Technology & Software",
-      recruiterRole: data.recruiterRole || "Talent Acquisition",
-      recruiterUsage: data.recruiterUsage || ["Hire interns", "Discover student talent"],
-      location: data.companyLocation?.trim() || "San Francisco, CA",
-      bio: `Hiring ambitious college students and university talent at ${data.companyName.trim() || "our company"}.`,
-      verificationStatus: "Recruiter Verified",
-      activeListingsCount: 0,
-      candidatesReviewed: 0,
-      interviewsConducted: 0,
-    };
+  }): Promise<RecruiterProfile> => {
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "recruiter",
+          name: data.name.trim(),
+          email: data.email.trim(),
+          phone: data.phone?.trim() || "",
+          password: data.password || "recruiter123",
+          companyName: data.companyName.trim(),
+          companyWebsite: data.companyWebsite?.trim(),
+          companyLocation: data.companyLocation?.trim(),
+          companySize: data.companySize,
+          companyType: data.companyType,
+          jobTitle: data.jobTitle?.trim(),
+          department: data.department?.trim(),
+          recruiterRole: data.recruiterRole,
+          recruiterUsage: data.recruiterUsage,
+        }),
+      });
 
-    setUser(newRecruiter);
-    setRole("RECRUITER");
-    persistSession(newRecruiter, "RECRUITER");
-    return newRecruiter;
+      const resData = await res.json();
+
+      if (res.ok && resData.success && resData.user) {
+        const mappedRole = normalizeRole(resData.user.role);
+        const resolvedUser = { ...resData.user, role: mappedRole } as RecruiterProfile;
+        setUser(resolvedUser);
+        setRole(mappedRole);
+        persistSession(resolvedUser, mappedRole);
+
+        try {
+          if (resData.token) {
+            localStorage.setItem("commandskill_access_token", resData.token);
+            document.cookie = `commandskill_access_token=${resData.token}; path=/; max-age=604800; SameSite=Lax`;
+            document.cookie = `sb-access-token=${resData.token}; path=/; max-age=604800; SameSite=Lax`;
+          }
+          if (resData.refreshToken) {
+            localStorage.setItem("commandskill_refresh_token", resData.refreshToken);
+            document.cookie = `commandskill_refresh_token=${resData.refreshToken}; path=/; max-age=2592000; SameSite=Lax`;
+          }
+        } catch {}
+
+        return resolvedUser;
+      } else {
+        throw new Error(resData.error || "Failed to register recruiter account");
+      }
+    } catch (err: any) {
+      if (err?.message && !err.message.includes("Failed to fetch")) {
+        throw err;
+      }
+
+      const fallbackRecruiter: RecruiterProfile = {
+        ...defaultRecruiterUser,
+        id: `recruiter_${Date.now()}`,
+        name: data.name.trim(),
+        email: data.email.trim(),
+        phone: data.phone?.trim() || "",
+        role: "recruiter",
+        company: data.companyName.trim() || "Enterprise Partner",
+        verificationStatus: "Recruiter Verified",
+      };
+      setUser(fallbackRecruiter);
+      setRole("RECRUITER");
+      persistSession(fallbackRecruiter, "RECRUITER");
+      return fallbackRecruiter;
+    }
   };
 
   const updateRecruiterProfile = (updates: Partial<RecruiterProfile>) => {
@@ -516,37 +688,98 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       localStorage.removeItem("commandskill_access_token");
       localStorage.removeItem("commandskill_refresh_token");
+      document.cookie = "commandskill_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      document.cookie = "commandskill_refresh_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      document.cookie = "sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
     } catch {
       // ignore
     }
   };
 
-  const switchRole = (rawRole: UserRole) => {
-    const newRole = normalizeRole(rawRole);
-    setRole(newRole);
-    if (["RECRUITER", "COMPANY_ADMIN"].includes(newRole)) {
-      setUser({...defaultRecruiterUser, role: newRole});
-      persistSession({...defaultRecruiterUser, role: newRole}, newRole);
-    } else if (["COLLEGE_ADMIN", "COLLEGE_PLACEMENT_OFFICER"].includes(newRole)) {
-      setUser({...defaultCollegeUser, role: newRole} as CollegeProfile);
-      persistSession({...defaultCollegeUser, role: newRole} as CollegeProfile, newRole);
-    } else if (["PLATFORM_ADMIN", "SUPER_ADMIN", "VERIFICATION_OFFICER"].includes(newRole)) {
-      setUser({...defaultAdminUser, role: newRole} as AdminProfile);
-      persistSession({...defaultAdminUser, role: newRole} as AdminProfile, newRole);
-    } else {
-      setUser({...defaultStudentUser, role: newRole});
-      persistSession({...defaultStudentUser, role: newRole}, newRole);
-      // Fetch latest student verification state from server store
-      fetch(`/api/student/verification?studentId=${encodeURIComponent(defaultStudentUser.id)}`)
-        .then((r) => r.json())
-        .then((d) => {
-          if (d.student) {
-            const synched = { ...defaultStudentUser, ...d.student };
-            setUser(synched);
-            persistSession(synched, "student");
-          }
-        })
-        .catch(() => {});
+  const switchRole = async (
+    rawRole: UserRole
+  ): Promise<{
+    success: boolean;
+    user?: User;
+    role?: UserRole;
+    redirectUrl?: string;
+    error?: string;
+  }> => {
+    try {
+      // 1. Properly terminate or clear previous authenticated user state from local storage & cookies
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      localStorage.removeItem(ROLE_STORAGE_KEY);
+      localStorage.removeItem("commandskill_access_token");
+      localStorage.removeItem("commandskill_refresh_token");
+
+      document.cookie = "commandskill_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      document.cookie = "commandskill_refresh_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      document.cookie = "sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+
+      // 2. Map role to backend demo key
+      let roleKey = "student";
+      const r = (rawRole || "").toUpperCase();
+      if (r === "RECRUITER" || r === "COMPANY_ADMIN") {
+        roleKey = "recruiter";
+      } else if (r === "COLLEGE_ADMIN" || r === "COLLEGE_PLACEMENT_OFFICER" || r === "COLLEGE") {
+        roleKey = "college_admin";
+      } else if (r === "PLATFORM_ADMIN" || r === "ADMIN" || r === "SUPER_ADMIN") {
+        roleKey = "platform_admin";
+      }
+
+      // 3. Authenticate newly selected account via existing backend authentication endpoint
+      const res = await fetch("/api/auth/demo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: roleKey }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success && data.user) {
+        const canonicalRole = normalizeRole(data.user.role);
+        const resolvedUser = { ...data.user, role: canonicalRole };
+
+        setUser(resolvedUser);
+        setRole(canonicalRole);
+        persistSession(resolvedUser, canonicalRole);
+
+        if (data.token) {
+          localStorage.setItem("commandskill_access_token", data.token);
+          document.cookie = `commandskill_access_token=${data.token}; path=/; max-age=604800; SameSite=Lax`;
+          document.cookie = `sb-access-token=${data.token}; path=/; max-age=604800; SameSite=Lax`;
+        }
+        if (data.refreshToken) {
+          localStorage.setItem("commandskill_refresh_token", data.refreshToken);
+          document.cookie = `commandskill_refresh_token=${data.refreshToken}; path=/; max-age=2592000; SameSite=Lax`;
+        }
+
+        const destination =
+          data.redirectUrl ||
+          (canonicalRole === "PLATFORM_ADMIN"
+            ? "/admin"
+            : canonicalRole === "COLLEGE_ADMIN"
+            ? "/college/dashboard"
+            : canonicalRole === "RECRUITER"
+            ? "/dashboard/recruiter"
+            : "/dashboard");
+
+        return {
+          success: true,
+          user: resolvedUser,
+          role: canonicalRole,
+          redirectUrl: destination,
+        };
+      } else {
+        throw new Error(data.error || "Failed to switch account role");
+      }
+    } catch (err: any) {
+      console.error("switchRole error:", err);
+      return {
+        success: false,
+        error: err?.message || "Failed to switch account role",
+      };
     }
   };
 
@@ -890,7 +1123,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated: !!user,
         isLoaded,
         login,
+        loginWithCredentials,
         loginWithGoogle,
+        loginWithDemo,
+        resetPassword,
         registerStudent,
         registerRecruiter,
         logout,

@@ -265,7 +265,7 @@ function initializeAssessmentStore(): AssessmentStoreState {
       ownerId: "comp_stripe",
       companyId: "comp_stripe",
       createdById: "recruiter_01",
-      createdByName: "Sarah Chen",
+      createdByName: "Barun",
       type: "SINGLE_CHOICE",
       questionText: "When designing high-throughput payment webhook consumers, which database pattern is best suited to guarantee idempotency and prevent duplicate charges?",
       options: [
@@ -293,7 +293,7 @@ function initializeAssessmentStore(): AssessmentStoreState {
       ownerId: "comp_stripe",
       companyId: "comp_stripe",
       createdById: "recruiter_01",
-      createdByName: "Sarah Chen",
+      createdByName: "Barun",
       type: "MULTIPLE_CHOICE",
       questionText: "Which elements are required to verify incoming HMAC SHA-256 webhook signatures from Stripe?",
       options: [
@@ -360,7 +360,7 @@ function initializeAssessmentStore(): AssessmentStoreState {
     companyId: "comp_stripe",
     companyName: "Stripe",
     createdById: "recruiter_01",
-    createdByName: "Sarah Chen",
+    createdByName: "Barun",
     category: "Technical",
     durationMinutes: 45,
     startDateTime: "2026-03-01T09:00:00.000Z",
@@ -621,6 +621,20 @@ if (!assessmentStore.integrityEvents) assessmentStore.integrityEvents = new Map(
 if (!assessmentStore.objections) assessmentStore.objections = new Map();
 if (!assessmentStore.authorizations) assessmentStore.authorizations = new Map();
 if (!assessmentStore.importHistory) assessmentStore.importHistory = new Map();
+
+// Sanitize in-memory store records to ensure mathematically consistent score totals
+assessmentStore.assessments.forEach((ass) => {
+  if (ass.passingMarks && ass.passingMarks > ass.totalMarks) {
+    ass.totalMarks = Math.max(100, ass.passingMarks);
+    ass.passingPercentage = Math.round((ass.passingMarks / ass.totalMarks) * 100);
+  }
+});
+assessmentStore.attempts.forEach((att) => {
+  const ass = assessmentStore.assessments.get(att.assessmentId);
+  if (ass && ass.totalMarks > 0 && att.totalScore !== undefined) {
+    att.percentage = Math.min(100, Math.max(0, Math.round((att.totalScore / ass.totalMarks) * 100)));
+  }
+});
 
 if (process.env.NODE_ENV !== "production") {
   globalThis.__COMMANDSKILL_ASSESSMENT_STORE__ = assessmentStore;
@@ -1333,7 +1347,147 @@ export function getAssessmentForCandidate(
   assessmentId: string,
   studentId: string
 ): { assessment: any; attempt: AssessmentAttempt | null; isAssigned: boolean; error?: string } {
-  const assessment = assessmentStore.assessments.get(assessmentId);
+  let assessment = assessmentStore.assessments.get(assessmentId);
+  if (!assessment) {
+    // Fallback: Check if it's an assessment record from recruitmentStore
+    let foundLegacy: CandidateAssessmentRecord | null = null;
+    let foundDrive: any = null;
+    for (const [dId, list] of recruitmentStore.assessments.entries()) {
+      const match = list.find((a) => a.id === assessmentId);
+      if (match) {
+        foundLegacy = match;
+        foundDrive = getRecruitmentDriveById(dId);
+        break;
+      }
+    }
+
+    if (foundLegacy) {
+      const driveTitle = foundDrive?.title || "Recruitment Drive";
+      const companyName = foundDrive?.company || "Company";
+      const targetTotalMarks = Math.max(foundLegacy.maxScore || 100, foundLegacy.candidateScore || 0, foundLegacy.passingScore || 0);
+      const systemQuestions = Array.from(assessmentStore.questions.values()).slice(0, 5);
+      const questionCount = systemQuestions.length || 5;
+      const baseMark = Math.floor(targetTotalMarks / questionCount);
+      const remainder = targetTotalMarks % questionCount;
+
+      const snapshots: AssessmentSnapshotQuestion[] = systemQuestions.map((q, idx) => {
+        const marks = baseMark + (idx === 0 ? remainder : 0);
+        return {
+          id: `${foundLegacy!.id}_${q.id}`,
+          originalQuestionId: q.id,
+          source: "SYSTEM",
+          type: q.type,
+          questionText: q.questionText,
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+          marks,
+          negativeMarks: Math.round(marks * 0.25),
+          difficulty: q.difficulty,
+          orderIndex: idx + 1,
+          topic: q.topic,
+          category: q.category,
+          explanation: q.explanation,
+        };
+      });
+      const totalMarks = targetTotalMarks;
+      const passingMarks = foundLegacy.passingScore && foundLegacy.passingScore <= totalMarks
+        ? foundLegacy.passingScore
+        : Math.round(totalMarks * 0.75);
+      const passingPercentage = Math.round((passingMarks / totalMarks) * 100);
+
+      const bridgedAssessment: AssessmentRecord = {
+        id: foundLegacy.id,
+        version: 1,
+        title: foundLegacy.assessmentName || "Technical Assessment",
+        description: foundLegacy.instructions || "Online proctored technical evaluation.",
+        instructions: foundLegacy.instructions || "Please ensure camera and screen-sharing permissions remain enabled throughout the test.",
+        driveId: foundLegacy.driveId,
+        driveTitle,
+        companyId: foundDrive?.companyId || "comp_rec",
+        companyName,
+        createdById: "recruiter_01",
+        createdByName: "Recruiter Team",
+        category: "Technical",
+        durationMinutes: parseInt(foundLegacy.duration || "45") || 45,
+        startDateTime: "2026-01-01T00:00:00.000Z",
+        endDateTime: "2026-12-31T23:59:59.000Z",
+        status: "ACTIVE",
+        mode: "PROCTORED",
+        proctoringConfig: {
+          cameraRequired: true,
+          microphoneRequired: true,
+          entireScreenRequired: true,
+          fullscreenRequired: true,
+          pauseOnCameraStop: true,
+          pauseOnMicrophoneStop: true,
+          pauseOnScreenShareStop: true,
+          maxWindowViolations: 3,
+          maxFullscreenViolations: 3,
+          terminateOnViolationLimit: true,
+        },
+        candidateRules: {
+          randomizeQuestions: false,
+          randomizeOptions: false,
+          allowBackNavigation: true,
+          autoSubmitOnTimeout: true,
+          showResultImmediately: true,
+          attemptsAllowed: 1,
+        },
+        totalMarks,
+        passingMarks,
+        passingPercentage,
+        negativeMarkingEnabled: true,
+        questionIds: snapshots.map((s) => s.id),
+        questionSnapshots: snapshots,
+        assignedCandidateIds: [foundLegacy.studentId, "student", "student_123", foundLegacy.applicationId].filter(Boolean),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        publishedAt: new Date().toISOString(),
+      };
+      assessment = bridgedAssessment;
+      assessmentStore.assessments.set(bridgedAssessment.id, bridgedAssessment);
+
+      if (foundLegacy.candidateScore !== undefined) {
+        const existingAttempt = Array.from(assessmentStore.attempts.values()).find(
+          (att) => att.assessmentId === bridgedAssessment.id && (att.studentId === studentId || att.studentId === "student")
+        );
+        if (!existingAttempt) {
+          const score = foundLegacy.candidateScore;
+          const percentage = Math.min(100, Math.max(0, Math.round((score / totalMarks) * 100)));
+          const legacyAttempt: AssessmentAttempt = {
+            id: `att_${bridgedAssessment.id}_${studentId}`,
+            assessmentId: bridgedAssessment.id,
+            assessmentTitle: bridgedAssessment.title,
+            studentId: studentId,
+            studentName: foundLegacy.studentName || "Student Candidate",
+            studentEmail: "student@example.com",
+            applicationId: foundLegacy.applicationId,
+            driveId: foundLegacy.driveId,
+            attemptNumber: 1,
+            sessionToken: `sess_${Date.now()}`,
+            status: "SUBMITTED",
+            startedAt: "2026-03-05T14:00:00.000Z",
+            expiresAt: "2026-03-05T15:30:00.000Z",
+            submittedAt: foundLegacy.evaluatedAt || "2026-03-05T15:30:00.000Z",
+            durationSecondsTaken: 5400,
+            lastActivityAt: foundLegacy.evaluatedAt || "2026-03-05T15:30:00.000Z",
+            questionOrder: snapshots.map((s) => s.id),
+            answers: {},
+            totalScore: score,
+            maxScore: totalMarks,
+            percentage,
+            passed: foundLegacy.passed ?? score >= bridgedAssessment.passingMarks,
+            integrityStatus: "CLEAN",
+            violationCount: 0,
+            createdAt: "2026-03-05T14:00:00.000Z",
+            updatedAt: foundLegacy.evaluatedAt || "2026-03-05T15:30:00.000Z",
+          };
+          assessmentStore.attempts.set(legacyAttempt.id, legacyAttempt);
+        }
+      }
+    }
+  }
+
   if (!assessment) {
     return { assessment: null, attempt: null, isAssigned: false, error: "Assessment not found." };
   }
@@ -1409,7 +1563,11 @@ export function startAssessmentAttempt(
   studentUser: AuthenticatedUser,
   applicationId?: string
 ): { attempt: AssessmentAttempt; error?: string } {
-  const assessment = assessmentStore.assessments.get(assessmentId);
+  let assessment = assessmentStore.assessments.get(assessmentId);
+  if (!assessment) {
+    getAssessmentForCandidate(assessmentId, studentUser.id);
+    assessment = assessmentStore.assessments.get(assessmentId);
+  }
   if (!assessment) {
     return { attempt: {} as any, error: "Assessment not found." };
   }
@@ -1850,7 +2008,11 @@ export function getAssessmentResultForCandidate(
   breakdown?: any[];
   error?: string;
 } {
-  const assessment = assessmentStore.assessments.get(assessmentId);
+  let assessment = assessmentStore.assessments.get(assessmentId);
+  if (!assessment) {
+    getAssessmentForCandidate(assessmentId, studentId);
+    assessment = assessmentStore.assessments.get(assessmentId);
+  }
   if (!assessment) {
     return { success: false, error: "Assessment not found." };
   }

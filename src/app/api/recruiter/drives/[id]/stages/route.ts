@@ -56,7 +56,7 @@ export async function PUT(
       driveId: id,
       driveTitle: drive.title,
       actorId: auth.recruiter.id,
-      actorName: auth.recruiter.name || "Sarah Chen",
+      actorName: auth.recruiter.name || "Barun",
       actorRole: "RECRUITER",
       action: "STAGES_UPDATED",
       targetType: "STAGE",

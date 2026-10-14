@@ -36,7 +36,7 @@ import { isUniversityEmail } from "@/lib/utils";
 export default function SignupPage() {
   const router = useRouter();
   const { registerStudent, registerRecruiter } = useAuth();
-  const { success } = useToast();
+  const { success, error: toastError } = useToast();
 
   const [role, setRole] = useState<UserRole>("student");
 
@@ -176,7 +176,7 @@ export default function SignupPage() {
   };
 
   // Student Form Submission
-  const handleStudentSubmit = (e: React.FormEvent) => {
+  const handleStudentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const errs: Record<string, string> = {};
     if (!name.trim()) errs.name = "Full name is required";
@@ -194,50 +194,64 @@ export default function SignupPage() {
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      const isUni = isUniversityEmail(email);
-      registerStudent({
-        name,
-        email,
-        university: universityOrCompany,
+    setErrors({});
+    try {
+      const student = await registerStudent({
+        name: name.trim(),
+        email: email.trim(),
+        university: universityOrCompany.trim(),
         password,
       });
+
+      const isUni = isUniversityEmail(email);
       if (isUni) {
         success(`Account created! Institutional email verified for ${universityOrCompany || "your university"}.`);
       } else {
-        success(`Account created! Please verify your student status.`);
+        success("Account created successfully! Welcome to CommandSkill.");
       }
-      router.push("/onboarding");
-    }, 600);
+      window.location.href = isUni ? "/dashboard" : "/onboarding?step=verification";
+    } catch (err: any) {
+      const msg = err?.message || "An unexpected error occurred during registration.";
+      setErrors({ global: msg });
+      toastError(msg);
+      setIsLoading(false);
+    }
   };
 
   // Recruiter Account Creation Final Submit
-  const handleRecruiterSubmit = () => {
+  const handleRecruiterSubmit = async () => {
     if (!validateStep1() || !validateStep2() || !validateStep3() || !validateStep4()) {
       setErrors({ global: "Please complete all required fields before creating account." });
       return;
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      registerRecruiter({
-        name,
-        email,
-        phone,
+    setErrors({});
+    try {
+      const recruiter = await registerRecruiter({
+        name: name.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
         password,
-        companyName: universityOrCompany,
-        companyWebsite,
-        companyLocation,
+        companyName: universityOrCompany.trim(),
+        companyWebsite: companyWebsite.trim(),
+        companyLocation: companyLocation.trim(),
         companySize,
         companyType,
-        jobTitle: jobTitle || "Talent Acquisition Lead",
+        jobTitle: jobTitle.trim() || "Talent Acquisition Lead",
         department,
         recruiterRole,
         recruiterUsage,
       });
+
       success(`Welcome to CommandSkill Employer Suite, ${name}!`);
-      router.push("/dashboard/recruiter");
-    }, 700);
+      window.location.href = "/dashboard/recruiter";
+    } catch (err: any) {
+      const msg = err?.message || "An unexpected error occurred during registration.";
+      setErrors({ global: msg });
+      toastError(msg);
+      setIsLoading(false);
+    }
   };
 
   const stepsList = [
@@ -337,6 +351,13 @@ export default function SignupPage() {
                   <div className="border-t border-border w-full" />
                 </div>
               </div>
+
+              {errors.global && (
+                <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{errors.global}</span>
+                </div>
+              )}
 
               <form onSubmit={handleStudentSubmit} className="space-y-4">
                 <div>
@@ -474,6 +495,12 @@ export default function SignupPage() {
 
               {/* Wizard Content Card */}
               <div className="p-6 sm:p-8 rounded-2xl border border-border bg-card shadow-sm space-y-6">
+                {errors.global && (
+                  <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{errors.global}</span>
+                  </div>
+                )}
                 {/* STEP 1: PERSONAL & CONTACT INFORMATION */}
                 {currentStep === 1 && (
                   <div className="space-y-5 animate-in fade-in duration-200">
@@ -503,7 +530,7 @@ export default function SignupPage() {
                       <div>
                         <Input
                           label="Full Name *"
-                          placeholder="Sarah Chen"
+                          placeholder="Barun"
                           value={name}
                           onChange={(e) => {
                             setName(e.target.value);
@@ -521,7 +548,7 @@ export default function SignupPage() {
                         <Input
                           label="Work Email *"
                           type="email"
-                          placeholder="sarah@stripe.com"
+                          placeholder="barun@stripe.com"
                           value={email}
                           onChange={(e) => {
                             setEmail(e.target.value);

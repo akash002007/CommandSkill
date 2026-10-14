@@ -40,7 +40,7 @@ export default function RecruiterProfilePage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   // Edit fields
-  const [name, setName] = useState(recruiter?.name || "Sarah Chen");
+  const [name, setName] = useState(recruiter?.name || "Barun");
   const [title, setTitle] = useState(recruiter?.title || "University Talent Lead");
   const [department, setDepartment] = useState(recruiter?.department || "University Talent & Early Career");
   const [phone, setPhone] = useState(recruiter?.phone || "+1 (415) 890-2134");
@@ -83,14 +83,14 @@ export default function RecruiterProfilePage() {
             <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 text-center sm:text-left">
               <Avatar
                 src={recruiter?.avatar}
-                name={recruiter?.name || "Sarah Chen"}
+                name={recruiter?.name || "Barun"}
                 size="xl"
                 className="w-20 h-20 sm:w-24 sm:h-24 ring-4 ring-blue-500/20"
               />
               <div className="space-y-1.5">
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
                   <h1 className="text-2xl font-extrabold text-foreground tracking-tight">
-                    {recruiter?.name || "Sarah Chen"}
+                    {recruiter?.name || "Barun"}
                   </h1>
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-blue-500/30">
                     <ShieldCheck className="w-3.5 h-3.5" />
@@ -175,7 +175,7 @@ export default function RecruiterProfilePage() {
                   <Mail className="w-3.5 h-3.5" />
                   Work Email:
                 </span>
-                <span className="font-semibold text-foreground">{recruiter?.email || "sarah@stripe.com"}</span>
+                <span className="font-semibold text-foreground">{recruiter?.email || "barun@stripe.com"}</span>
               </div>
               <div className="flex items-center justify-between p-2.5 rounded-xl bg-muted/40">
                 <span className="flex items-center gap-2">

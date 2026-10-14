@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedRecruiter } from "@/lib/supabase/server";
-import { updateApplicationStatus, logRecruiterAction } from "@/lib/recruitment-store";
+import { authorizeResourceAccess } from "@/lib/authorization";
+import {
+  getApplicationById,
+  getRecruitmentDriveById,
+  updateApplicationStatusAtomic,
+  logRecruiterAction,
+} from "@/lib/recruitment-store";
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,24 +28,50 @@ export async function POST(request: NextRequest) {
     }
 
     const updatedApps = [];
-    const actorName = auth.recruiter.name || "Sarah Chen";
+    const failedApps: { id: string; error: string }[] = [];
+    const actorName = auth.recruiter.name || "Recruiter";
 
     for (const id of applicationIds) {
+      const existing = getApplicationById(id);
+      if (!existing) {
+        failedApps.push({ id, error: "Application not found" });
+        continue;
+      }
+
+      const drive = getRecruitmentDriveById(existing.driveId);
+      const driveCompanyId =
+        drive?.companyId || (drive?.company.toLowerCase() === "stripe" ? "comp_stripe" : "comp_openai");
+      if (!authorizeResourceAccess(auth.recruiter, { companyId: driveCompanyId })) {
+        failedApps.push({ id, error: "Forbidden: Unauthorized recruitment drive access" });
+        continue;
+      }
+
+      let result;
       if (action === "SHORTLIST") {
-        const app = updateApplicationStatus(id, "SHORTLISTED", actorName, reason || "Bulk shortlisted");
-        if (app) updatedApps.push(app);
-      } else if (action === "REJECT") {
-        const app = updateApplicationStatus(id, "REJECTED", actorName, reason || "Bulk rejected");
-        if (app) updatedApps.push(app);
-      } else if (action === "MOVE_STAGE") {
-        const app = updateApplicationStatus(
-          id,
-          "IN_SELECTION",
+        result = updateApplicationStatusAtomic(id, "SHORTLISTED", {
+          actorId: auth.recruiter.id,
           actorName,
-          reason || "Bulk stage transition",
-          targetStageId
-        );
-        if (app) updatedApps.push(app);
+          notes: reason || "Bulk shortlisted",
+        });
+      } else if (action === "REJECT") {
+        result = updateApplicationStatusAtomic(id, "REJECTED", {
+          actorId: auth.recruiter.id,
+          actorName,
+          notes: reason || "Bulk rejected",
+        });
+      } else if (action === "MOVE_STAGE") {
+        result = updateApplicationStatusAtomic(id, "IN_SELECTION", {
+          actorId: auth.recruiter.id,
+          actorName,
+          notes: reason || "Bulk stage transition",
+          nextStageId: targetStageId,
+        });
+      }
+
+      if (result && result.success && result.application) {
+        updatedApps.push(result.application);
+      } else {
+        failedApps.push({ id, error: result?.error || "Failed to update" });
       }
     }
 
@@ -50,13 +82,15 @@ export async function POST(request: NextRequest) {
       action: `BULK_${action}`,
       targetType: "APPLICATION",
       targetId: "BULK_SELECTION",
-      details: `Bulk ${action} executed for ${updatedApps.length} candidate(s). Reason: ${reason || "N/A"}`,
+      details: `Bulk ${action} executed for ${updatedApps.length} candidate(s). Failed: ${failedApps.length}. Reason: ${reason || "N/A"}`,
     });
 
     return NextResponse.json({
       success: true,
       processedCount: updatedApps.length,
+      failedCount: failedApps.length,
       applications: updatedApps,
+      failures: failedApps,
     });
   } catch (err) {
     console.error("[POST /api/recruiter/applications/bulk] Error:", err);

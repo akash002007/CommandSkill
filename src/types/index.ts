@@ -1895,6 +1895,7 @@ export interface RecruitmentDrive {
   title: string;
   position: string;
   description: string;
+  companyId?: string;
   company: string;
   companyLogo?: string;
   department: string;
@@ -1973,6 +1974,8 @@ export interface RecruitmentApplication {
   };
   history?: CandidateApplicationHistoryEntry[];
   visibilityScope?: ApplicationVisibilityScope;
+  version?: number;
+  lastIdempotencyKey?: string;
 }
 
 export type ApplicationVisibilityScope = 'PRIVATE' | 'COMMANDSKILL' | 'COLLEGE_PLACEMENT';

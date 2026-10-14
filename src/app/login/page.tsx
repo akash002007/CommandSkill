@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Sparkles, ArrowRight, Lock, Mail, UserCheck, Briefcase, GraduationCap, Building2, ArrowLeft } from "lucide-react";
+import { Sparkles, ArrowRight, Lock, Mail, UserCheck, Briefcase, GraduationCap, Building2, ArrowLeft, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ShinyCTA } from "@/components/ui/ShinyCTA";
 import { Input } from "@/components/ui/Input";
@@ -13,36 +13,61 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { UserRole } from "@/types";
+import { cn } from "@/lib/utils";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { loginWithCredentials, loginWithDemo, resetPassword } = useAuth();
   const { success, error: toastError } = useToast();
 
   const [role, setRole] = useState<UserRole>("student");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [demoLoadingRole, setDemoLoadingRole] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
 
   const handleQuickFill = (fillRole: UserRole) => {
+    setErrorMsg("");
     setRole(fillRole);
-    if (fillRole === "student") {
+    if (fillRole === "student" || fillRole === "STUDENT") {
       setEmail("alex.rivera@stanford.edu");
       setPassword("commandskill123");
-    } else if (fillRole === "recruiter") {
-      setEmail("sarah.chen@stripe-careers.com");
+      success("Autofilled Student demo credentials");
+    } else if (fillRole === "recruiter" || fillRole === "RECRUITER") {
+      setEmail("barun@stripe-careers.com");
       setPassword("recruiter123");
-    } else if (fillRole === "COLLEGE_ADMIN") {
+      success("Autofilled Recruiter demo credentials");
+    } else if (fillRole === "COLLEGE_ADMIN" || (fillRole as string) === "college") {
       setEmail("placement@stanford.edu");
       setPassword("college123");
+      success("Autofilled College Dean demo credentials");
     } else {
       setEmail("priya.menon@commandskill.io");
       setPassword("admin123");
+      success("Autofilled Admin demo credentials");
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleForgotPassword = async () => {
+    if (!email || !email.includes("@")) {
+      setErrorMsg("Please enter your email address to request password reset.");
+      toastError("Please enter your email address first.");
+      return;
+    }
+    try {
+      const res = await resetPassword(email);
+      if (res.success) {
+        success(res.message || `Password reset instructions sent to ${email}`);
+      } else {
+        toastError(res.error || "Password reset failed");
+      }
+    } catch {
+      toastError("Unable to process password reset. Please try again.");
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg("");
 
@@ -58,29 +83,24 @@ export default function LoginPage() {
 
     setIsLoading(true);
 
-    setTimeout(() => {
-      login(email, role);
-      success(
-        `Welcome back! Logged in as ${
-          role === "student"
-            ? "Alex Rivera (Student)"
-            : role === "recruiter"
-            ? "Sarah Chen (Recruiter)"
-            : role === "COLLEGE_ADMIN"
-            ? "Dr. Ronald Evans (Dean of Placements, Stanford)"
-            : "Priya Menon (Admin)"
-        }`
-      );
-      if (role === "recruiter") {
-        router.push("/dashboard/recruiter");
-      } else if (role === "COLLEGE_ADMIN" || (role as string) === "college") {
-        router.push("/college/dashboard");
-      } else if (role === "admin" || role === "PLATFORM_ADMIN") {
-        router.push("/admin");
+    try {
+      const result = await loginWithCredentials(email, password, role);
+
+      if (result.success && result.redirectUrl) {
+        success(`Welcome back, ${result.user?.name || "User"}!`);
+        window.location.href = result.redirectUrl;
       } else {
-        router.push("/dashboard");
+        const errorText = result.error || "Invalid email or password. Please verify your credentials.";
+        setErrorMsg(errorText);
+        toastError(errorText);
+        setIsLoading(false);
       }
-    }, 600);
+    } catch (err: any) {
+      const errorText = err?.message || "Failed to sign in. Please verify your credentials.";
+      setErrorMsg(errorText);
+      toastError(errorText);
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -191,6 +211,9 @@ export default function LoginPage() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <Input
+                id="email"
+                name="email"
+                autoComplete="email"
                 label="Email Address"
                 type="email"
                 placeholder={role === "student" ? "you@university.edu" : "name@company.com"}
@@ -202,14 +225,21 @@ export default function LoginPage() {
 
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <label className="block text-xs font-semibold text-foreground/80 tracking-wide uppercase">
+                  <label htmlFor="password" className="block text-xs font-semibold text-foreground/80 tracking-wide uppercase">
                     Password
                   </label>
-                  <span className="text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
+                  <button
+                    type="button"
+                    onClick={handleForgotPassword}
+                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer bg-transparent border-none p-0"
+                  >
                     Forgot password?
-                  </span>
+                  </button>
                 </div>
                 <Input
+                  id="password"
+                  name="password"
+                  autoComplete="current-password"
                   type="password"
                   placeholder="••••••••••••"
                   value={password}
@@ -236,48 +266,97 @@ export default function LoginPage() {
               </ShinyCTA>
             </form>
 
-            {/* Quick-fill shortcut for hassle-free evaluation */}
-            <div className="pt-4 border-t border-border/60">
-              <p className="text-xs text-muted-foreground text-center mb-2.5">
-                Quick Demo Login (One-Click Fill)
-              </p>
+            {/* Demo Accounts */}
+            <div className="pt-5 border-t border-border/60">
+              <div className="mb-3 space-y-0.5">
+                <h3 className="text-xs font-semibold tracking-tight text-foreground">
+                  Demo Accounts
+                </h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Explore CommandSkill with a demo account
+                </p>
+              </div>
+
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <Button
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
-                  className="text-xs px-2"
+                  id="demo-student-button"
+                  data-testid="demo-student-button"
+                  disabled={isLoading}
                   onClick={() => handleQuickFill("student")}
+                  className={cn(
+                    "h-9 px-2 sm:px-2.5 rounded-lg text-xs font-medium whitespace-nowrap",
+                    "border border-border/80 bg-muted/40 hover:bg-muted/70 dark:bg-muted/20 dark:hover:bg-muted/50",
+                    "text-foreground/90 hover:text-foreground",
+                    "hover:border-blue-500/50 dark:hover:border-blue-500/40 hover:bg-blue-50/40 dark:hover:bg-blue-500/10",
+                    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50 focus-visible:border-blue-500/50",
+                    "active:scale-[0.98] transition-all duration-150 select-none cursor-pointer",
+                    "disabled:opacity-50 disabled:pointer-events-none disabled:active:scale-100",
+                    "flex items-center justify-center gap-1.5"
+                  )}
                 >
-                  Student
-                </Button>
-                <Button
+                  <span>Student</span>
+                </button>
+
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
-                  className="text-xs px-2"
+                  id="demo-recruiter-button"
+                  data-testid="demo-recruiter-button"
+                  disabled={isLoading}
                   onClick={() => handleQuickFill("recruiter")}
+                  className={cn(
+                    "h-9 px-2 sm:px-2.5 rounded-lg text-xs font-medium whitespace-nowrap",
+                    "border border-border/80 bg-muted/40 hover:bg-muted/70 dark:bg-muted/20 dark:hover:bg-muted/50",
+                    "text-foreground/90 hover:text-foreground",
+                    "hover:border-blue-500/50 dark:hover:border-blue-500/40 hover:bg-blue-50/40 dark:hover:bg-blue-500/10",
+                    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50 focus-visible:border-blue-500/50",
+                    "active:scale-[0.98] transition-all duration-150 select-none cursor-pointer",
+                    "disabled:opacity-50 disabled:pointer-events-none disabled:active:scale-100",
+                    "flex items-center justify-center gap-1.5"
+                  )}
                 >
-                  Recruiter
-                </Button>
-                <Button
+                  <span>Recruiter</span>
+                </button>
+
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
-                  className="text-xs px-2 border-purple-500/30 text-purple-600 dark:text-purple-400"
+                  id="demo-college-button"
+                  data-testid="demo-college-button"
+                  disabled={isLoading}
                   onClick={() => handleQuickFill("COLLEGE_ADMIN")}
+                  className={cn(
+                    "h-9 px-2 sm:px-2.5 rounded-lg text-xs font-medium whitespace-nowrap",
+                    "border border-border/80 bg-muted/40 hover:bg-muted/70 dark:bg-muted/20 dark:hover:bg-muted/50",
+                    "text-foreground/90 hover:text-foreground",
+                    "hover:border-blue-500/50 dark:hover:border-blue-500/40 hover:bg-blue-50/40 dark:hover:bg-blue-500/10",
+                    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50 focus-visible:border-blue-500/50",
+                    "active:scale-[0.98] transition-all duration-150 select-none cursor-pointer",
+                    "disabled:opacity-50 disabled:pointer-events-none disabled:active:scale-100",
+                    "flex items-center justify-center gap-1.5"
+                  )}
                 >
-                  College Dean
-                </Button>
-                <Button
+                  <span>College Dean</span>
+                </button>
+
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
-                  className="text-xs px-2"
+                  id="demo-admin-button"
+                  data-testid="demo-admin-button"
+                  disabled={isLoading}
                   onClick={() => handleQuickFill("admin")}
+                  className={cn(
+                    "h-9 px-2 sm:px-2.5 rounded-lg text-xs font-medium whitespace-nowrap",
+                    "border border-border/80 bg-muted/40 hover:bg-muted/70 dark:bg-muted/20 dark:hover:bg-muted/50",
+                    "text-foreground/90 hover:text-foreground",
+                    "hover:border-blue-500/50 dark:hover:border-blue-500/40 hover:bg-blue-50/40 dark:hover:bg-blue-500/10",
+                    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50 focus-visible:border-blue-500/50",
+                    "active:scale-[0.98] transition-all duration-150 select-none cursor-pointer",
+                    "disabled:opacity-50 disabled:pointer-events-none disabled:active:scale-100",
+                    "flex items-center justify-center gap-1.5"
+                  )}
                 >
-                  Admin
-                </Button>
+                  <span>Admin</span>
+                </button>
               </div>
             </div>
           </div>
